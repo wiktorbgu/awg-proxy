@@ -2,7 +2,7 @@
 
 🇷🇺 [Русская версия](docs/README.ru.md)
 
-Lightweight Docker container that transforms standard WireGuard traffic into AmneziaWG-compatible format, allowing MikroTik routers to connect to AmneziaWG servers and bypass DPI.
+Lightweight Docker container that transforms standard WireGuard traffic into AmneziaWG-compatible format, allowing MikroTik routers to connect to AmneziaWG servers with traffic obfuscation support.
 
 ## Table of Contents
 

@@ -3,7 +3,7 @@ WORKDIR /src
 COPY go.mod go.sum main.go ./
 COPY internal/ internal/
 ARG TARGETOS TARGETARCH TARGETVARIANT VERSION=dev
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+RUN env CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     ${TARGETVARIANT:+GOARM=${TARGETVARIANT#v}} \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /awg-proxy .
 

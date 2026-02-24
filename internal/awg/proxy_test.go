@@ -12,7 +12,7 @@ import (
 
 // ams42 config: exact parameters from ams42.conf.
 func ams42Config() *Config {
-	return &Config{
+	cfg := &Config{
 		Jc:       4,
 		Jmin:     10,
 		Jmax:     50,
@@ -25,6 +25,8 @@ func ams42Config() *Config {
 		Timeout:  180,
 		LogLevel: LevelInfo,
 	}
+	cfg.ComputeFastPath()
+	return cfg
 }
 
 // makeWGPacket creates a WireGuard packet with the given type and size.

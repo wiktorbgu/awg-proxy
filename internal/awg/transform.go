@@ -76,6 +76,10 @@ type Config struct {
 	mac1keyServer [32]byte // precomputed BLAKE2s-256("mac1----" || ServerPub)
 	mac1keyClient [32]byte // precomputed BLAKE2s-256("mac1----" || ClientPub)
 
+	h4Fixed uint32 // H4.Min for point-range configs (avoids Pick())
+	h4NoOp  bool   // true when H4={4,4} and S4==0 (identity transform, zero work)
+	maxScan int    // precomputed max(S1,S2,S3,S4) for inbound scanning
+
 	Timeout  int // inactivity timeout seconds, default 180
 	LogLevel int // 0=none, 1=error, 2=info
 }
@@ -92,6 +96,14 @@ const (
 func (c *Config) ComputeMAC1Keys() {
 	c.mac1keyServer = computeMAC1Key(c.ServerPub)
 	c.mac1keyClient = computeMAC1Key(c.ClientPub)
+}
+
+// ComputeFastPath precomputes fast-path flags for hot-path optimizations.
+// Must be called after setting H4, S4 and all S1-S4 values.
+func (c *Config) ComputeFastPath() {
+	c.h4Fixed = c.H4.Min
+	c.h4NoOp = c.H4.Min == wgTransportData && c.H4.Max == wgTransportData && c.S4 == 0
+	c.maxScan = max(c.S1, c.S2, c.S3, c.S4)
 }
 
 // TransformOutbound transforms an outbound WireGuard packet into AmneziaWG format.
@@ -144,7 +156,14 @@ func TransformOutbound(buf []byte, n int, cfg *Config) (out []byte, sendJunk boo
 		return out, false
 
 	case msgType == wgTransportData && n >= WgTransportMinSize:
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Pick())
+		if cfg.h4NoOp {
+			return buf[:n], false
+		}
+		if cfg.H4.Min == cfg.H4.Max {
+			binary.LittleEndian.PutUint32(buf[:4], cfg.h4Fixed)
+		} else {
+			binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Pick())
+		}
 		if cfg.S4 > 0 {
 			out = make([]byte, cfg.S4+n)
 			randFill(out[:cfg.S4])
@@ -168,12 +187,24 @@ func TransformInbound(buf []byte, n int, cfg *Config) (out []byte, valid bool) {
 		return nil, false
 	}
 
-	maxScan := max(cfg.S1, cfg.S2, cfg.S3, cfg.S4)
+	// Fast path: transport data at offset 0 (no S4 padding, ~99.9% of traffic).
+	h := binary.LittleEndian.Uint32(buf[:4])
+	if cfg.H4.Contains(h) && n >= WgTransportMinSize {
+		if !cfg.h4NoOp {
+			binary.LittleEndian.PutUint32(buf[:4], wgTransportData)
+		}
+		return buf[:n], true
+	}
 
-	for off := 0; off <= maxScan && off+4 <= n; off++ {
+	// Slow path: scan offsets, check H4 first (most frequent), then H1/H2/H3.
+	for off := 0; off <= cfg.maxScan && off+4 <= n; off++ {
 		h := binary.LittleEndian.Uint32(buf[off : off+4])
 		rem := n - off
 
+		if cfg.H4.Contains(h) && rem >= WgTransportMinSize {
+			binary.LittleEndian.PutUint32(buf[off:off+4], wgTransportData)
+			return buf[off:n], true
+		}
 		if cfg.H1.Contains(h) && rem == WgHandshakeInitSize {
 			binary.LittleEndian.PutUint32(buf[off:off+4], wgHandshakeInit)
 			return buf[off:n], true
@@ -187,10 +218,6 @@ func TransformInbound(buf []byte, n int, cfg *Config) (out []byte, valid bool) {
 		}
 		if cfg.H3.Contains(h) && rem == WgCookieReplySize {
 			binary.LittleEndian.PutUint32(buf[off:off+4], wgCookieReply)
-			return buf[off:n], true
-		}
-		if cfg.H4.Contains(h) && rem >= WgTransportMinSize {
-			binary.LittleEndian.PutUint32(buf[off:off+4], wgTransportData)
 			return buf[off:n], true
 		}
 	}

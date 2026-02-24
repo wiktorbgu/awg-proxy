@@ -146,6 +146,7 @@ func parseEnv() (*awg.Config, *net.UDPAddr, *net.UDPAddr, error) {
 	}
 
 	cfg.ComputeMAC1Keys()
+	cfg.ComputeFastPath()
 
 	cfg.Timeout = 180
 	if v := os.Getenv("AWG_TIMEOUT"); v != "" {

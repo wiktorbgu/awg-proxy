@@ -3,6 +3,7 @@ package awg
 import (
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"sync"
@@ -17,7 +18,8 @@ type Proxy struct {
 	cfg        *Config
 	listenAddr *net.UDPAddr
 	remoteAddr *net.UDPAddr
-	clientAddr atomic.Pointer[net.UDPAddr]
+	clientAddr atomic.Pointer[netip.AddrPort]
+	remoteConn atomic.Pointer[net.UDPConn]
 	pool       sync.Pool
 	lastRecv   atomic.Int64 // unix timestamp of last packet from server
 	cpsCounter uint32       // counter for CPS <c> tags
@@ -37,6 +39,11 @@ func NewProxy(cfg *Config, listenAddr, remoteAddr *net.UDPAddr) *Proxy {
 	return p
 }
 
+func setSocketBuffers(conn *net.UDPConn, size int) {
+	conn.SetReadBuffer(size)
+	conn.SetWriteBuffer(size)
+}
+
 // Run starts the proxy and blocks until stop is called or a fatal error occurs.
 // The stop channel is closed to signal shutdown.
 func (p *Proxy) Run(stop <-chan struct{}) error {
@@ -45,46 +52,41 @@ func (p *Proxy) Run(stop <-chan struct{}) error {
 		return err
 	}
 	defer listenConn.Close()
+	setSocketBuffers(listenConn, 2*1024*1024)
 
 	remoteConn, err := net.DialUDP("udp", nil, p.remoteAddr)
 	if err != nil {
 		return err
 	}
+	setSocketBuffers(remoteConn, 2*1024*1024)
 
+	p.remoteConn.Store(remoteConn)
 	p.lastRecv.Store(time.Now().Unix())
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Channel to pass new remote connections to the serverToClient goroutine.
-	remoteCh := make(chan *net.UDPConn, 1)
-
 	go func() {
 		defer wg.Done()
-		p.clientToServer(listenConn, remoteConn, remoteCh, stop)
+		p.clientToServer(listenConn, stop)
 	}()
 
 	go func() {
 		defer wg.Done()
-		p.serverToClient(listenConn, remoteConn, remoteCh, stop)
+		p.serverToClient(listenConn, remoteConn, stop)
 	}()
 
 	wg.Wait()
-	remoteConn.Close()
+	if rc := p.remoteConn.Load(); rc != nil {
+		rc.Close()
+	}
 	return nil
 }
 
-func (p *Proxy) clientToServer(listenConn *net.UDPConn, remoteConn *net.UDPConn, remoteCh <-chan *net.UDPConn, stop <-chan struct{}) {
-	currentRemote := remoteConn
+func (p *Proxy) clientToServer(listenConn *net.UDPConn, stop <-chan struct{}) {
+	listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 
 	for {
-		// Check for new remote connection (non-blocking).
-		select {
-		case newRemote := <-remoteCh:
-			currentRemote = newRemote
-		default:
-		}
-
 		select {
 		case <-stop:
 			return
@@ -94,48 +96,61 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 		bufp := p.pool.Get().(*[]byte)
 		buf := *bufp
 
-		listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
-		n, addr, err := listenConn.ReadFromUDP(buf)
+		n, addr, err := listenConn.ReadFromUDPAddrPort(buf)
 		if err != nil {
 			p.pool.Put(bufp)
 			if isTimeout(err) {
+				listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 				continue
 			}
 			if isClosedErr(err) {
 				return
 			}
 			LogError(p.cfg, "listen read: ", err.Error())
+			listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 			continue
 		}
 
 		// Update client address.
-		if cur := p.clientAddr.Load(); cur == nil || !addrEqual(cur, addr) {
-			p.clientAddr.Store(addr)
+		if cur := p.clientAddr.Load(); cur == nil || *cur != addr {
+			a := addr
+			p.clientAddr.Store(&a)
 			LogInfo(p.cfg, "client: ", addr.String())
 		}
 
+		currentRemote := p.remoteConn.Load()
 		out, sendJunk := TransformOutbound(buf, n, p.cfg)
 
-		LogDebug(p.cfg, "c->s: recv ", strconv.Itoa(n), "B, send ", strconv.Itoa(len(out)), "B, junk=", strconv.FormatBool(sendJunk))
+		if p.cfg.LogLevel >= LevelDebug {
+			LogDebug(p.cfg, "c->s: recv ", strconv.Itoa(n), "B, send ", strconv.Itoa(len(out)), "B, junk=", strconv.FormatBool(sendJunk))
+		}
 
 		if sendJunk {
 			// CPS packets (I1->I2->I3->I4->I5).
 			cpsPackets := GenerateCPSPackets(p.cfg.CPS, &p.cpsCounter)
 			for ci, pkt := range cpsPackets {
 				if _, err := currentRemote.Write(pkt); err != nil {
-					LogDebug(p.cfg, "c->s: cps ", strconv.Itoa(ci), " write err: ", err.Error())
+					if p.cfg.LogLevel >= LevelDebug {
+						LogDebug(p.cfg, "c->s: cps ", strconv.Itoa(ci), " write err: ", err.Error())
+					}
 					break
 				}
-				LogDebug(p.cfg, "c->s: cps ", strconv.Itoa(ci+1), "/", strconv.Itoa(len(cpsPackets)), " ", strconv.Itoa(len(pkt)), "B sent")
+				if p.cfg.LogLevel >= LevelDebug {
+					LogDebug(p.cfg, "c->s: cps ", strconv.Itoa(ci+1), "/", strconv.Itoa(len(cpsPackets)), " ", strconv.Itoa(len(pkt)), "B sent")
+				}
 			}
 			// Junk packets.
 			junkPackets := GenerateJunkPackets(p.cfg)
 			for i, junk := range junkPackets {
 				if _, err := currentRemote.Write(junk); err != nil {
-					LogDebug(p.cfg, "c->s: junk ", strconv.Itoa(i), " write err: ", err.Error())
+					if p.cfg.LogLevel >= LevelDebug {
+						LogDebug(p.cfg, "c->s: junk ", strconv.Itoa(i), " write err: ", err.Error())
+					}
 					break // connection likely closed during reconnect
 				}
-				LogDebug(p.cfg, "c->s: junk ", strconv.Itoa(i+1), "/", strconv.Itoa(len(junkPackets)), " ", strconv.Itoa(len(junk)), "B sent")
+				if p.cfg.LogLevel >= LevelDebug {
+					LogDebug(p.cfg, "c->s: junk ", strconv.Itoa(i+1), "/", strconv.Itoa(len(junkPackets)), " ", strconv.Itoa(len(junk)), "B sent")
+				}
 			}
 		}
 
@@ -146,13 +161,13 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 				continue // reconnect in progress, WG will retransmit
 			}
 			LogError(p.cfg, "remote write: ", err.Error())
-		} else {
+		} else if p.cfg.LogLevel >= LevelDebug {
 			LogDebug(p.cfg, "c->s: transformed ", strconv.Itoa(len(out)), "B sent to server")
 		}
 	}
 }
 
-func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn, remoteCh chan<- *net.UDPConn, stop <-chan struct{}) {
+func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn, stop <-chan struct{}) {
 	currentRemote := remoteConn
 	timeout := time.Duration(p.cfg.Timeout) * time.Second
 	if timeout <= 0 {
@@ -160,6 +175,7 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 	}
 
 	backoff := time.Second
+	currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 
 	for {
 		select {
@@ -171,11 +187,11 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 		bufp := p.pool.Get().(*[]byte)
 		buf := *bufp
 
-		currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 		n, err := currentRemote.Read(buf)
 		if err != nil {
 			p.pool.Put(bufp)
 			if isTimeout(err) {
+				currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 				// Check inactivity timeout.
 				if time.Since(time.Unix(p.lastRecv.Load(), 0)) > timeout {
 					LogInfo(p.cfg, "remote timeout, reconnecting")
@@ -185,11 +201,9 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 					}
 					currentRemote.Close()
 					currentRemote = newConn
-					// Notify clientToServer of new connection.
-					select {
-					case remoteCh <- newConn:
-					default:
-					}
+					p.remoteConn.Store(newConn)
+					setSocketBuffers(newConn, 2*1024*1024)
+					currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 					p.clientAddr.Store(nil) // reset client
 				}
 				continue
@@ -205,36 +219,41 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 			}
 			currentRemote.Close()
 			currentRemote = newConn
-			select {
-			case remoteCh <- newConn:
-			default:
-			}
+			p.remoteConn.Store(newConn)
+			setSocketBuffers(newConn, 2*1024*1024)
+			currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 			continue
 		}
 
 		p.lastRecv.Store(time.Now().Unix())
 		backoff = time.Second // reset backoff on success
 
-		LogDebug(p.cfg, "s->c: recv ", strconv.Itoa(n), "B from server")
+		if p.cfg.LogLevel >= LevelDebug {
+			LogDebug(p.cfg, "s->c: recv ", strconv.Itoa(n), "B from server")
+		}
 
 		out, valid := TransformInbound(buf, n, p.cfg)
 		if !valid {
-			LogDebug(p.cfg, "s->c: invalid/junk packet ", strconv.Itoa(n), "B, dropped")
+			if p.cfg.LogLevel >= LevelDebug {
+				LogDebug(p.cfg, "s->c: invalid/junk packet ", strconv.Itoa(n), "B, dropped")
+			}
 			p.pool.Put(bufp)
 			continue
 		}
 
-		LogDebug(p.cfg, "s->c: transformed ", strconv.Itoa(len(out)), "B, valid=true")
+		if p.cfg.LogLevel >= LevelDebug {
+			LogDebug(p.cfg, "s->c: transformed ", strconv.Itoa(len(out)), "B, valid=true")
+		}
 
 		clientAddr := p.clientAddr.Load()
 		if clientAddr != nil {
-			_, err = listenConn.WriteToUDP(out, clientAddr)
+			_, err = listenConn.WriteToUDPAddrPort(out, *clientAddr)
 			if err != nil {
 				LogError(p.cfg, "listen write: ", err.Error())
-			} else {
+			} else if p.cfg.LogLevel >= LevelDebug {
 				LogDebug(p.cfg, "s->c: sent ", strconv.Itoa(len(out)), "B to ", clientAddr.String())
 			}
-		} else {
+		} else if p.cfg.LogLevel >= LevelDebug {
 			LogDebug(p.cfg, "s->c: no client addr, packet dropped")
 		}
 		p.pool.Put(bufp)
@@ -283,10 +302,6 @@ func (p *Proxy) reconnectRemote(stop <-chan struct{}, backoff *time.Duration) *n
 			*backoff = maxBackoff
 		}
 	}
-}
-
-func addrEqual(a, b *net.UDPAddr) bool {
-	return a.Port == b.Port && a.IP.Equal(b.IP)
 }
 
 func isTimeout(err error) bool {

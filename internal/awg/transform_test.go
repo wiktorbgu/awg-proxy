@@ -6,7 +6,7 @@ import (
 )
 
 func testConfig() *Config {
-	return &Config{
+	cfg := &Config{
 		Jc:   3,
 		Jmin: 30,
 		Jmax: 500,
@@ -17,6 +17,8 @@ func testConfig() *Config {
 		H3:   HRange{Min: 1234567892, Max: 1234567892},
 		H4:   HRange{Min: 1234567893, Max: 1234567893},
 	}
+	cfg.ComputeFastPath()
+	return cfg
 }
 
 func makePacket(msgType uint32, size int) []byte {
@@ -312,6 +314,7 @@ func TestInboundDropsTooShort(t *testing.T) {
 func TestNoPaddingS1Zero(t *testing.T) {
 	cfg := testConfig()
 	cfg.S1 = 0
+	cfg.ComputeFastPath()
 	original := makePacket(wgHandshakeInit, WgHandshakeInitSize)
 	saved := make([]byte, WgHandshakeInitSize)
 	copy(saved, original)
@@ -338,6 +341,7 @@ func TestNoPaddingS1Zero(t *testing.T) {
 func TestNoPaddingS2Zero(t *testing.T) {
 	cfg := testConfig()
 	cfg.S2 = 0
+	cfg.ComputeFastPath()
 	original := makePacket(wgHandshakeResponse, WgHandshakeResponseSize)
 	saved := make([]byte, WgHandshakeResponseSize)
 	copy(saved, original)
@@ -413,6 +417,7 @@ func TestHRangeContains(t *testing.T) {
 func TestOutboundCookieWithS3(t *testing.T) {
 	cfg := testConfig()
 	cfg.S3 = 49
+	cfg.ComputeFastPath()
 	payload := makePacket(wgCookieReply, WgCookieReplySize)
 
 	out, sendJunk := TransformOutbound(payload, WgCookieReplySize, cfg)
@@ -431,6 +436,7 @@ func TestOutboundCookieWithS3(t *testing.T) {
 func TestOutboundTransportWithS4(t *testing.T) {
 	cfg := testConfig()
 	cfg.S4 = 17
+	cfg.ComputeFastPath()
 	payload := makePacket(wgTransportData, 100)
 
 	out, sendJunk := TransformOutbound(payload, 100, cfg)
@@ -449,6 +455,7 @@ func TestOutboundTransportWithS4(t *testing.T) {
 func TestInboundScanningWithS3(t *testing.T) {
 	cfg := testConfig()
 	cfg.S3 = 49
+	cfg.ComputeFastPath()
 	// Build AWG cookie reply with S3 padding.
 	inner := makePacket(cfg.H3.Min, WgCookieReplySize)
 	buf := make([]byte, cfg.S3+WgCookieReplySize)
@@ -471,6 +478,7 @@ func TestInboundScanningWithS3(t *testing.T) {
 func TestInboundScanningWithS4(t *testing.T) {
 	cfg := testConfig()
 	cfg.S4 = 17
+	cfg.ComputeFastPath()
 	// Build AWG transport with S4 padding.
 	inner := makePacket(cfg.H4.Min, 100)
 	buf := make([]byte, cfg.S4+100)
@@ -493,6 +501,7 @@ func TestInboundScanningWithS4(t *testing.T) {
 func TestInboundHRange(t *testing.T) {
 	cfg := testConfig()
 	cfg.H4 = HRange{Min: 1000, Max: 2000}
+	cfg.ComputeFastPath()
 	// Use a value inside the range.
 	buf := makePacket(1500, 100)
 
@@ -509,6 +518,7 @@ func TestInboundHRange(t *testing.T) {
 func TestInboundHRangeReject(t *testing.T) {
 	cfg := testConfig()
 	cfg.H4 = HRange{Min: 1000, Max: 2000}
+	cfg.ComputeFastPath()
 	// Use a value outside the range.
 	buf := makePacket(999, 100)
 
@@ -526,6 +536,7 @@ func TestRoundtripV2(t *testing.T) {
 	cfg.H2 = HRange{Min: 300000, Max: 400000}
 	cfg.H3 = HRange{Min: 500000, Max: 600000}
 	cfg.H4 = HRange{Min: 700000, Max: 800000}
+	cfg.ComputeFastPath()
 
 	// Roundtrip handshake init.
 	initPkt := makePacket(wgHandshakeInit, WgHandshakeInitSize)
@@ -593,6 +604,7 @@ func TestV1Backward(t *testing.T) {
 		H3:   HRange{Min: 1858775673, Max: 1858775673},
 		H4:   HRange{Min: 332219739, Max: 332219739},
 	}
+	cfg.ComputeFastPath()
 
 	// Handshake init roundtrip.
 	initPkt := makePacket(wgHandshakeInit, WgHandshakeInitSize)
@@ -637,5 +649,35 @@ func TestV1Backward(t *testing.T) {
 	}
 	if binary.LittleEndian.Uint32(result[:4]) != wgCookieReply {
 		t.Fatal("v1 backward: cookie type not restored")
+	}
+}
+
+func BenchmarkTransformOutboundTransport(b *testing.B) {
+	cfg := testConfig()
+	buf := make([]byte, 1200)
+	binary.LittleEndian.PutUint32(buf[:4], wgTransportData)
+	for i := 4; i < 1200; i++ {
+		buf[i] = byte(i)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		binary.LittleEndian.PutUint32(buf[:4], wgTransportData)
+		TransformOutbound(buf, 1200, cfg)
+	}
+}
+
+func BenchmarkTransformInboundTransport(b *testing.B) {
+	cfg := testConfig()
+	buf := make([]byte, 1200)
+	binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Min)
+	for i := 4; i < 1200; i++ {
+		buf[i] = byte(i)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Min)
+		TransformInbound(buf, 1200, cfg)
 	}
 }

@@ -31,11 +31,14 @@ jobs:
       - name: Bump version tag
         id: tag
         run: |
-          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST=$(git tag -l 'v*' | sort -V | tail -1)
+          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
           MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
           MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
           PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
           NEW="v${MAJOR}.${MINOR}.$((PATCH+1))"
+          git tag "$NEW"
+          git push origin "$NEW"
           echo "tag=$NEW" >> "$GITHUB_OUTPUT"
           echo "$LATEST -> $NEW"
 
@@ -54,8 +57,17 @@ jobs:
       - name: Build Docker image (amd64)
         run: docker buildx build --platform linux/amd64 --output type=oci,dest=awg-proxy-amd64.tar -t awg-proxy:amd64 .
 
+      - name: Build Docker image for RouterOS 7.20 LT (arm64)
+        run: scripts/mkdockertar.sh linux arm64 "" awg-proxy:arm64 awg-proxy-arm64-7.20-longterm.tar
+
+      - name: Build Docker image for RouterOS 7.20 LT (arm/v7)
+        run: scripts/mkdockertar.sh linux arm 7 awg-proxy:arm awg-proxy-arm-7.20-longterm.tar
+
+      - name: Build Docker image for RouterOS 7.20 LT (amd64)
+        run: scripts/mkdockertar.sh linux amd64 "" awg-proxy:amd64 awg-proxy-amd64-7.20-longterm.tar
+
       - name: Gzip tar files
-        run: gzip awg-proxy-arm64.tar awg-proxy-arm.tar awg-proxy-amd64.tar
+        run: gzip awg-proxy-arm64.tar awg-proxy-arm.tar awg-proxy-amd64.tar awg-proxy-arm64-7.20-longterm.tar awg-proxy-arm-7.20-longterm.tar awg-proxy-amd64-7.20-longterm.tar
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -66,3 +78,6 @@ jobs:
             awg-proxy-arm64.tar.gz
             awg-proxy-arm.tar.gz
             awg-proxy-amd64.tar.gz
+            awg-proxy-arm64-7.20-longterm.tar.gz
+            awg-proxy-arm-7.20-longterm.tar.gz
+            awg-proxy-amd64-7.20-longterm.tar.gz

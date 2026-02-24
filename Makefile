@@ -3,7 +3,8 @@ IMAGE_NAME = awg-proxy
 BUILD_DIR = builds
 
 .PHONY: build test clean docker-arm64 docker-arm docker-amd64 docker-all \
-	docker-arm64-7.20-longterm docker-arm-7.20-longterm docker-amd64-7.20-longterm docker-all-7.20-longterm
+	docker-arm64-7.20-longterm docker-arm-7.20-longterm docker-amd64-7.20-longterm docker-all-7.20-longterm \
+	binary-arm64 binary-arm binary-amd64 binary-all
 
 LDFLAGS = -s -w -X main.version=$(VERSION)
 
@@ -59,3 +60,17 @@ docker-amd64-7.20-longterm:
 	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-amd64-7.20-longterm.tar
 
 docker-all-7.20-longterm: docker-arm64-7.20-longterm docker-arm-7.20-longterm docker-amd64-7.20-longterm
+
+binary-arm64:
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(IMAGE_NAME)-linux-arm64 .
+
+binary-arm:
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(IMAGE_NAME)-linux-arm .
+
+binary-amd64:
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(IMAGE_NAME)-linux-amd64 .
+
+binary-all: binary-arm64 binary-arm binary-amd64

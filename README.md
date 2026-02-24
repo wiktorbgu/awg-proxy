@@ -1,127 +1,88 @@
-# awg-proxy -- AmneziaWG UDP Proxy for MikroTik
+# awg-proxy -- AmneziaWG для MikroTik
 
-🇷🇺 [Русская версия](docs/README.ru.md)
+[English version](README_en.md)
 
-Lightweight Docker container that transforms standard WireGuard traffic into AmneziaWG-compatible format, allowing MikroTik routers to connect to AmneziaWG servers with traffic obfuscation support.
+Легковесный Docker-контейнер, который позволяет MikroTik подключаться к серверам AmneziaWG. Весь трафик шифруется нативным WireGuard-клиентом роутера, а контейнер только преобразует формат пакетов.
 
-## Table of Contents
-
-- [Requirements](#requirements)
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Verification](#verification)
-- [Configuration Reference](#configuration-reference)
-- [Getting AWG Parameters](#getting-awg-parameters)
-- [Uninstallation](#uninstallation)
-- [Building from Source](#building-from-source)
-- [Troubleshooting](#troubleshooting)
-
-## How It Works
+## Как это работает
 
 ```
-MikroTik WG client ──UDP──► [awg-proxy container] ──UDP──► AmneziaWG server
-  (native crypto)           (packet transformation)        (sees valid AWG)
+MikroTik WG-клиент ──UDP──> [awg-proxy] ──UDP──> сервер AmneziaWG
+   (шифрование)          (преобразование)          (обфускация)
 ```
 
-MikroTik handles all WireGuard cryptography natively using its built-in WG client. The proxy sits between the router and the AmneziaWG server, performing only packet framing transformations:
+Прокси заменяет заголовки пакетов, добавляет паддинг и мусорные пакеты так, чтобы сервер AmneziaWG принял трафик. Ключи и данные не затрагиваются.
 
-- **Outbound (WG to AWG):** replaces standard WireGuard message type headers with AmneziaWG values (H1--H4), prepends random padding to handshake packets (S1/S2 bytes), sends junk packets before handshake initiation (Jc packets of Jmin--Jmax bytes), and recomputes MAC1 using the server's public key so the AWG server accepts the packet.
-- **Inbound (AWG to WG):** reverses type replacement, strips padding from handshake packets, recomputes MAC1 using the client's public key so MikroTik accepts the response, and silently drops junk packets.
+Совместим с AWG v1 и v2 -- версия определяется автоматически по переменным окружения.
 
-### Protocol versions
+## Быстрый старт (конфигуратор)
 
-The proxy automatically detects which protocol version is in use based on the environment variables provided:
+1. Экспортируйте `.conf`-файл из AmneziaVPN (см. [Получение параметров AWG](#получение-параметров-awg))
+2. Откройте [конфигуратор](https://amneziawg-mikrotik.github.io/awg-proxy/configurator.html)
+3. Вставьте содержимое `.conf`-файла
+4. Скопируйте сгенерированные команды и выполните их в терминале MikroTik
 
-- **v1 (default):** fixed H1--H4 type values, S1/S2 padding, simple random junk packets. Compatible with all standard AmneziaWG servers.
-- **v2:** superset of v1. Activated when any of the following optional variables are set: `AWG_S3`, `AWG_S4`, H-parameter ranges (e.g. `AWG_H1=1000-2000`), or `AWG_I1`--`AWG_I5` CPS templates. v2 features are described in the [Configuration Reference](#configuration-reference) below.
+Готово. Конфигуратор работает оффлайн, данные не отправляются на сервер.
 
-No tunnel data or session keys are modified. The proxy is completely transparent to the WireGuard protocol layer.
+## Требования
 
-## Quick Start
+- Сервер AmneziaWG с известными параметрами обфускации
+- Файл конфигурации `.conf`, экспортированный из AmneziaVPN
+- MikroTik RouterOS 7.4+ с пакетом **container**
+- Архитектура: ARM64, ARM (v7) или x86_64 ([проверить устройство](https://help.mikrotik.com/docs/spaces/ROS/pages/47579139/Container))
+- Минимум 5 МБ на диске, рекомендуется 16+ МБ RAM
 
-1. Export your AmneziaWG `.conf` file (see [Getting AWG Parameters](#getting-awg-parameters))
-2. Open the **[Offline Configurator](https://amneziawg-mikrotik.github.io/awg-proxy/configurator.html)**
-3. Paste the `.conf` contents and copy the generated commands
-4. Execute the commands on your MikroTik router via terminal
+## Ручная установка
 
-## Requirements
+### 1. Включение контейнеров
 
-- **AmneziaWG server** -- a running server with known obfuscation parameters
-- **Configuration file** (`.conf`) -- exported from AmneziaVPN (see [Getting AWG Parameters](#getting-awg-parameters))
-- **MikroTik RouterOS 7.4+** with the **container** package installed
-- **Supported architectures**: ARM64, ARM (v7), or x86\_64
-  ([check your device](https://help.mikrotik.com/docs/spaces/ROS/pages/47579139/Container))
-- Device mode enabled: `/system/device-mode/update container=yes`
-- At least 5 MB free disk space, 16+ MB free RAM recommended
-
-## Installation
-
-### Step 1: Enable container package and reboot
-
-Install the container package from `/system/package`, then enable container mode and reboot:
+Установите пакет container с [mikrotik.com](https://mikrotik.com/download), загрузите на роутер и перезагрузитесь. Затем:
 
 ```routeros
 /system/device-mode/update container=yes
 ```
 
-The router will reboot. After it comes back up, proceed to the next steps.
+Роутер попросит подтверждение (кнопка или перезагрузка, зависит от модели).
 
-### Choose your setup method
+### 2. Загрузка образа
 
-**Option A: [Offline Configurator](https://amneziawg-mikrotik.github.io/awg-proxy/configurator.html) (recommended)**
+Скачайте `awg-proxy-{arch}.tar.gz` со страницы [Releases](https://github.com/amneziawg-mikrotik/awg-proxy/releases/latest) и загрузите на роутер через Winbox или SCP.
 
-Paste your AmneziaWG `.conf` file and get ready-to-use MikroTik commands. Copy the output and execute on the router, then skip to [Verification](#verification).
-
-**Option B: Manual setup**
-
-Follow Steps 2--7 below to configure everything manually.
-
-### Step 2: Upload image to router
-
-Download `awg-proxy-{arch}.tar.gz` from [GitHub Releases](https://github.com/amneziawg-mikrotik/awg-proxy/releases/latest) (choose arm64, arm, or amd64 to match your router) and upload it to the router via Winbox or SCP.
-
-Alternatively, download directly from RouterOS (replace the URL with the actual release version):
+Или скачайте прямо на роутер (замените URL на актуальный):
 
 ```routeros
-# /tool/fetch url="https://github.com/amneziawg-mikrotik/awg-proxy/releases/download/vX.X.X/awg-proxy-arm64.tar.gz" dst-path=awg-proxy-arm64.tar.gz
+/tool/fetch url="https://github.com/amneziawg-mikrotik/awg-proxy/releases/download/vX.X.X/awg-proxy-arm64.tar.gz" dst-path=awg-proxy-arm64.tar.gz
 ```
 
-### Step 3: Create network (veth, IP, NAT)
+### 3. Настройка сети
 
 ```routeros
-# Create virtual Ethernet interface for the container
 /interface/veth/add name=veth-awg-proxy address=172.18.0.2/30 gateway=172.18.0.1
-
-# Assign IP address to the host side of the veth pair
 /ip/address/add address=172.18.0.1/30 interface=veth-awg-proxy
-
-# NAT rule so the container can reach the internet
 /ip/firewall/nat/add chain=srcnat action=masquerade src-address=172.18.0.0/30
 ```
 
-### Step 4: Create WireGuard interface and peer
+### 4. WireGuard
 
 ```routeros
-# Create the WireGuard interface
 /interface/wireguard/add name=wg-awg-proxy private-key="YOUR_PRIVATE_KEY" listen-port=12429
-
-# Add the peer, pointing endpoint at the proxy container
-/interface/wireguard/peers/add interface=wg-awg-proxy public-key="SERVER_PUBLIC_KEY" preshared-key="YOUR_PRESHARED_KEY" endpoint-address=172.18.0.2 endpoint-port=51820 allowed-address=0.0.0.0/0 persistent-keepalive=25
-
-# Assign the tunnel IP address
+/interface/wireguard/peers/add interface=wg-awg-proxy public-key="SERVER_PUBLIC_KEY" \
+    preshared-key="YOUR_PRESHARED_KEY" endpoint-address=172.18.0.2 endpoint-port=51820 \
+    allowed-address=0.0.0.0/0 persistent-keepalive=25
 /ip/address/add address=YOUR_TUNNEL_IP interface=wg-awg-proxy
 ```
 
-Replace `YOUR_PRIVATE_KEY` with your WireGuard private key (from `[Interface]` PrivateKey), `SERVER_PUBLIC_KEY` with the AWG server public key (from `[Peer]` PublicKey), `YOUR_PRESHARED_KEY` with the preshared key (if any), and `YOUR_TUNNEL_IP` with the tunnel IP (from `[Interface]` Address, e.g. `10.8.0.2/32`). Add routing rules as needed for your setup.
+Замените:
+- `YOUR_PRIVATE_KEY` -- PrivateKey из `[Interface]`
+- `SERVER_PUBLIC_KEY` -- PublicKey из `[Peer]`
+- `YOUR_PRESHARED_KEY` -- PresharedKey из `[Peer]` (если есть)
+- `YOUR_TUNNEL_IP` -- Address из `[Interface]` (например, `10.8.0.2/32`)
 
-### Step 5: Set environment variables
-
-`AWG_CLIENT_PUB` is automatically read from the WireGuard interface created in the previous step -- no need to compute it manually.
+### 5. Переменные окружения
 
 ```routeros
-# Container environment variables (AWG obfuscation parameters)
 /container/envs/add list=awg-proxy-env key=AWG_LISTEN value=":51820"
-/container/envs/add list=awg-proxy-env key=AWG_REMOTE value="YOUR_SERVER:PORT"
+/container/envs/add list=awg-proxy-env key=AWG_REMOTE value="SERVER_IP:PORT"
 /container/envs/add list=awg-proxy-env key=AWG_JC value="5"
 /container/envs/add list=awg-proxy-env key=AWG_JMIN value="30"
 /container/envs/add list=awg-proxy-env key=AWG_JMAX value="500"
@@ -135,161 +96,142 @@ Replace `YOUR_PRIVATE_KEY` with your WireGuard private key (from `[Interface]` P
 /container/envs/add list=awg-proxy-env key=AWG_CLIENT_PUB value=[/interface/wireguard/get [find name=wg-awg-proxy] public-key]
 ```
 
-Replace `YOUR_SERVER:PORT` with your AmneziaWG server address and port. Replace all H1--H4, S1, S2, Jc, Jmin, Jmax values with the actual parameters from your AmneziaWG configuration. `AWG_SERVER_PUB` is the AWG server public key (from `[Peer]` PublicKey in your `.conf` file).
+Замените все значения на параметры из вашего `.conf`-файла. `AWG_CLIENT_PUB` берется автоматически из WireGuard-интерфейса.
 
-### Step 6: Create container
-
-```routeros
-/container/add file=awg-proxy-arm64.tar.gz interface=veth-awg-proxy envlist=awg-proxy-env hostname=awg-proxy root-dir=disk1/awg-proxy logging=yes shm-size=4M start-on-boot=yes
-```
-
-### Step 7: Start container
+### 6. Создание и запуск контейнера
 
 ```routeros
+/container/add file=awg-proxy-arm64.tar.gz interface=veth-awg-proxy envlist=awg-proxy-env \
+    hostname=awg-proxy root-dir=disk1/awg-proxy logging=yes shm-size=4M start-on-boot=yes
 /container/start [find where tag~"awg-proxy"]
 ```
 
-## Verification
-
-After starting the container, confirm that everything is running correctly:
+Проверьте работу:
 
 ```routeros
 /container/print
-/interface/wireguard/print
 /interface/wireguard/peers/print
-/ping 172.18.0.2
 ```
 
-The container status should show `running`. The WireGuard peer should show a recent handshake time once traffic flows. The ping to `172.18.0.2` confirms the veth link to the container is up.
+Контейнер должен быть в статусе `running`, а у пира должно появиться значение `last-handshake`.
 
-## Configuration Reference
+## Получение параметров AWG
 
-All configuration is done through environment variables passed to the container.
+1. Откройте приложение **AmneziaVPN**
+2. Выберите нужное подключение
+3. Нажмите **Поделиться** (Share)
+4. Выберите: **Протокол**: AmneziaWG, **Формат**: AmneziaWG Format
+5. Сохраните `.conf`-файл
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `AWG_LISTEN` | Yes | -- | Listen address, e.g. `:51820` |
-| `AWG_REMOTE` | Yes | -- | AmneziaWG server address (`host:port`) |
-| `AWG_JC` | Yes | -- | Junk packet count sent before handshake initiation |
-| `AWG_JMIN` | Yes | -- | Minimum junk packet size in bytes |
-| `AWG_JMAX` | Yes | -- | Maximum junk packet size in bytes |
-| `AWG_S1` | Yes | -- | Random padding prepended to handshake init (bytes) |
-| `AWG_S2` | Yes | -- | Random padding prepended to handshake response (bytes) |
-| `AWG_H1` | Yes | -- | Replacement message type for handshake init |
-| `AWG_H2` | Yes | -- | Replacement message type for handshake response |
-| `AWG_H3` | Yes | -- | Replacement message type for cookie reply |
-| `AWG_H4` | Yes | -- | Replacement message type for transport data |
-| `AWG_SERVER_PUB` | Yes | -- | AWG server public key (base64), used for MAC1 recomputation on outbound handshake packets |
-| `AWG_CLIENT_PUB` | Yes | -- | WG client public key (base64), auto-derived from WG interface (see Step 5) |
-| `AWG_S3` | No | `0` | (v2) Random padding prepended to cookie reply packets (bytes) |
-| `AWG_S4` | No | `0` | (v2) Random padding prepended to transport data packets (bytes) |
-| `AWG_I1`--`AWG_I5` | No | -- | (v2) CPS junk packet templates (see [CPS templates](#cps-templates-v2)) |
-| `AWG_TIMEOUT` | No | `180` | Inactivity timeout in seconds before reconnecting |
-| `AWG_LOG_LEVEL` | No | `info` | Log verbosity: `none`, `error`, or `info` |
+Параметры обфускации (`Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`--`H4`) находятся в секции `[Interface]`, а `Endpoint` и `PublicKey` -- в секции `[Peer]`.
 
-H1--H4 accept either a fixed integer (`1234567890`) or a range (`1000000000-2000000000`). When a range is given, each packet gets a fresh random value drawn from that range. The receiver scans candidate offsets to locate a valid MAC1, so both endpoints must agree on the same range.
+## Дополнительные настройки
 
-### CPS templates (v2)
+### Маршрутизация трафика через туннель
 
-`AWG_I1` through `AWG_I5` define up to five structured junk packets sent before each handshake initiation. When any `AWG_Ix` variable is set, these replace the default random junk packets for that slot (unset slots are skipped). Templates are composed of angle-bracket tags in order:
+Конкретный хост:
 
-| Tag | Description |
-|---|---|
-| `<r N>` | N random bytes |
-| `<b 0xHEX>` | literal bytes given as hex (e.g. `<b 0xdeadbeef>`) |
-| `<t>` | 4-byte little-endian Unix timestamp |
-| `<c>` | 4-byte little-endian packet counter (increments per packet) |
-
-Example -- a 36-byte packet with a 4-byte magic, a timestamp, and 28 random bytes:
-
-```
-AWG_I1=<b 0xdeadbeef><t><r 28>
+```routeros
+/ip/route/add dst-address=8.8.8.8/32 gateway=wg-awg-proxy
 ```
 
-## Getting AWG Parameters
+Подсеть:
 
-The Jc, Jmin, Jmax, S1, S2, H1--H4 values must match your AmneziaWG server configuration exactly. v2 parameters (S3, S4, I1--I5) are optional and can be omitted if your server does not use them. To obtain the parameters:
+```routeros
+/ip/route/add dst-address=10.0.0.0/8 gateway=wg-awg-proxy
+```
 
-### Export from AmneziaVPN
+Просмотр маршрутов:
 
-1. Open the **AmneziaVPN** application
-2. Select the desired connection
-3. Tap **Share**
-4. Choose: **Protocol**: AmneziaWG, **Format**: AmneziaWG Format
-5. Save the resulting `.conf` file
+```routeros
+/ip/route/print where gateway=wg-awg-proxy
+```
 
-### Reading the parameters
+Удаление маршрута:
 
-1. Open the exported `.conf` file in a text editor.
-2. The obfuscation parameters are in the `[Interface]` section:
-   ```ini
-   [Interface]
-   Jc = 5
-   Jmin = 30
-   Jmax = 500
-   S1 = 20
-   S2 = 20
-   H1 = 1234567890
-   H2 = 1234567891
-   H3 = 1234567892
-   H4 = 1234567893
-   ```
-3. The `Endpoint` value from the `[Peer]` section becomes `AWG_REMOTE`.
-4. The `PublicKey` value from the `[Peer]` section becomes `AWG_SERVER_PUB`.
-5. `AWG_CLIENT_PUB` is derived automatically from the WireGuard interface (see Step 5).
+```routeros
+/ip/route/remove [find where dst-address="8.8.8.8/32" gateway="wg-awg-proxy"]
+```
 
-Alternatively, use the [offline configurator](https://amneziawg-mikrotik.github.io/awg-proxy/configurator.html) to paste your `.conf` file and generate all MikroTik commands automatically.
+### DNS через туннель
 
-## Uninstallation
+Чтобы DNS-запросы шли через туннель, укажите DNS-сервер и добавьте маршрут к нему:
 
-The uninstall script is created automatically during installation via the configurator.
-To remove awg-proxy, run:
+```routeros
+/ip/dns/set servers=8.8.8.8,8.8.4.4
+/ip/route/add dst-address=8.8.8.8/32 gateway=wg-awg-proxy
+/ip/route/add dst-address=8.8.4.4/32 gateway=wg-awg-proxy
+```
+
+### Маршрутизация по address-list (продвинутое)
+
+Для выборочной маршрутизации трафика через туннель используйте routing table и mangle rules.
+
+Создание routing table:
+
+```routeros
+/routing/table/add disabled=no fib name=r_to_vpn
+```
+
+Маршрут по умолчанию через туннель для этой таблицы:
+
+```routeros
+/ip/route/add dst-address=0.0.0.0/0 gateway=wg-awg-proxy routing-table=r_to_vpn
+```
+
+Address-list с адресами, которые нужно направить через туннель:
+
+```routeros
+/ip/firewall/address-list/add address=8.8.8.8 list=to_vpn
+/ip/firewall/address-list/add address=1.1.1.1 list=to_vpn
+```
+
+Mangle rules для маркировки трафика:
+
+```routeros
+# Пропускаем локальный трафик
+/ip/firewall/mangle/add chain=prerouting action=accept dst-address=10.0.0.0/8
+/ip/firewall/mangle/add chain=prerouting action=accept dst-address=172.16.0.0/12
+/ip/firewall/mangle/add chain=prerouting action=accept dst-address=192.168.0.0/16
+
+# Маркируем соединения к адресам из списка
+/ip/firewall/mangle/add chain=prerouting action=mark-connection \
+    dst-address-list=to_vpn connection-mark=no-mark \
+    new-connection-mark=to-vpn-conn passthrough=yes
+
+# Маркируем маршрутизацию для отмеченных соединений
+/ip/firewall/mangle/add chain=prerouting action=mark-routing \
+    connection-mark=to-vpn-conn new-routing-mark=r_to_vpn passthrough=yes
+```
+
+NAT для маркированного трафика:
+
+```routeros
+/ip/firewall/nat/add chain=srcnat action=masquerade routing-mark=r_to_vpn
+```
+
+Теперь весь трафик к адресам из списка `to_vpn` будет идти через туннель. Добавляйте адреса в список по мере необходимости.
+
+## Удаление
+
+Если установка была через конфигуратор:
 
 ```routeros
 /system/script/run awg-proxy-uninstall
 ```
 
-The script removes the container, WireGuard interface, NAT rules, routes,
-environment variables, restores previous DNS settings, and deletes itself.
+Скрипт удалит контейнер, WireGuard-интерфейс, правила NAT, маршруты, переменные окружения, восстановит DNS и удалит себя.
 
-## Building from Source
+## Устранение неполадок
 
-Requires Go 1.25+ and Docker with buildx support.
+**Контейнер не запускается** -- проверьте установку пакета container (`/system/package/print`), режим устройства (`/system/device-mode/print`) и свободное место (`/system/resource/print`).
 
-```bash
-make build          # Build local binary
-make test           # Run tests with race detector
-make docker-arm64   # Build Docker image for ARM64 (MikroTik ARM64 devices)
-make docker-arm     # Build Docker image for ARM v7
-make docker-amd64   # Build Docker image for x86_64
-make docker-all     # Build for all architectures
-```
+**Нет рукопожатия** -- убедитесь, что все параметры AWG (Jc, Jmin, Jmax, S1, S2, H1--H4) точно совпадают с сервером. Проверьте `AWG_REMOTE`, `AWG_SERVER_PUB` и `AWG_CLIENT_PUB`.
 
-The Docker build produces a minimal scratch-based image containing a single statically linked binary.
+**Нет трафика после рукопожатия** -- проверьте правило NAT (`/ip/firewall/nat/print`), маршрутизацию и `endpoint-address` пира (должен быть `172.18.0.2`).
 
-## Troubleshooting
+**Контейнер перезапускается** -- установите `AWG_LOG_LEVEL=info` и проверьте логи. Частая причина -- отсутствующие переменные окружения.
 
-**Container does not start**
-- Verify that the container package is installed: `/system/package/print`
-- Confirm device mode is enabled: `/system/device-mode/print`
-- Check available disk space: `/system/resource/print`
+## Лицензия
 
-**Handshake timeout (no connection established)**
-- Ensure all AWG parameters (Jc, Jmin, Jmax, S1, S2, H1--H4) match the server configuration exactly. Even a single mismatched value will prevent the handshake.
-- Verify that `AWG_REMOTE` points to the correct server address and port.
-- Verify that `AWG_SERVER_PUB` and `AWG_CLIENT_PUB` are set correctly. Incorrect public keys cause MAC1 verification failures and silently dropped packets.
-- Check that the container can reach the server: the NAT masquerade rule must be in place.
-
-**No traffic after successful handshake**
-- Confirm the NAT rule exists: `/ip/firewall/nat/print`
-- Check routing on the MikroTik -- traffic to the WireGuard peer must be routed through the proxy.
-- Verify the WireGuard peer `endpoint-address` is set to the container IP (`172.18.0.2`).
-
-**Container crash loop**
-- Inspect container status: `/container/print`
-- Set `AWG_LOG_LEVEL` to `info` to see detailed proxy logs.
-- Common cause: missing or invalid environment variables. All required variables must be set.
-
-## License
-
-MIT -- see [LICENSE](LICENSE) for details.
+MIT -- см. [LICENSE](LICENSE).

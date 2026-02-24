@@ -3,16 +3,33 @@ package awg
 import (
 	"encoding/binary"
 	"errors"
+	"math/rand/v2"
 	"strconv"
 	"time"
 )
 
+const alphanumChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+func randAlphanumFill(b []byte) {
+	for i := range b {
+		b[i] = alphanumChars[rand.IntN(len(alphanumChars))]
+	}
+}
+
+func randDigitFill(b []byte) {
+	for i := range b {
+		b[i] = '0' + byte(rand.IntN(10))
+	}
+}
+
 // CPS template segment kinds.
 const (
-	cpsStatic    byte = 'b' // static hex bytes
-	cpsRandom    byte = 'r' // random bytes
-	cpsTimestamp byte = 't' // 4-byte LE unix timestamp
-	cpsCounter   byte = 'c' // 4-byte LE packet counter
+	cpsStatic       byte = 'b' // static hex bytes
+	cpsRandom       byte = 'r' // random bytes
+	cpsTimestamp    byte = 't' // 4-byte LE unix timestamp
+	cpsCounter      byte = 'c' // 4-byte LE packet counter
+	cpsRandomChars  byte = 'C' // random alphanumeric ASCII chars (rc tag)
+	cpsRandomDigits byte = 'D' // random decimal digits (rd tag)
 )
 
 type cpsSegment struct {
@@ -27,7 +44,7 @@ type CPSTemplate struct {
 }
 
 // ParseCPSTemplate parses a CPS template string.
-// Format tags: <b 0xHEX>, <r SIZE>, <t>, <c>
+// Format tags: <b 0xHEX>, <r SIZE>, <rc SIZE>, <rd SIZE>, <t>, <c>
 func ParseCPSTemplate(s string) (*CPSTemplate, error) {
 	var segs []cpsSegment
 	i := 0
@@ -85,7 +102,29 @@ func parseCPSTag(tag string) (cpsSegment, error) {
 		return cpsSegment{kind: cpsStatic, data: data}, nil
 
 	case 'r':
-		// <r SIZE>
+		// <r SIZE>, <rc SIZE>, <rd SIZE>
+		if len(tag) > 1 && tag[1] == 'c' {
+			rest := trimLeft(tag[2:])
+			size, err := strconv.Atoi(rest)
+			if err != nil {
+				return cpsSegment{}, errors.New("invalid size in <rc> tag: " + err.Error())
+			}
+			if size <= 0 {
+				return cpsSegment{}, errors.New("<rc> size must be positive")
+			}
+			return cpsSegment{kind: cpsRandomChars, size: size}, nil
+		}
+		if len(tag) > 1 && tag[1] == 'd' {
+			rest := trimLeft(tag[2:])
+			size, err := strconv.Atoi(rest)
+			if err != nil {
+				return cpsSegment{}, errors.New("invalid size in <rd> tag: " + err.Error())
+			}
+			if size <= 0 {
+				return cpsSegment{}, errors.New("<rd> size must be positive")
+			}
+			return cpsSegment{kind: cpsRandomDigits, size: size}, nil
+		}
 		rest := trimLeft(tag[1:])
 		size, err := strconv.Atoi(rest)
 		if err != nil {
@@ -124,7 +163,7 @@ func (t *CPSTemplate) Generate(counter uint32) []byte {
 		switch seg.kind {
 		case cpsStatic:
 			total += len(seg.data)
-		case cpsRandom:
+		case cpsRandom, cpsRandomChars, cpsRandomDigits:
 			total += seg.size
 		case cpsTimestamp:
 			total += 4
@@ -142,6 +181,12 @@ func (t *CPSTemplate) Generate(counter uint32) []byte {
 			off += len(seg.data)
 		case cpsRandom:
 			randFill(buf[off : off+seg.size])
+			off += seg.size
+		case cpsRandomChars:
+			randAlphanumFill(buf[off : off+seg.size])
+			off += seg.size
+		case cpsRandomDigits:
+			randDigitFill(buf[off : off+seg.size])
 			off += seg.size
 		case cpsTimestamp:
 			binary.LittleEndian.PutUint32(buf[off:], uint32(time.Now().Unix()))

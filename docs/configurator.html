@@ -107,6 +107,29 @@
             color: #9ca3af;
         }
 
+        select, input[type="text"] {
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fafafa;
+            color: var(--text);
+            transition: border-color 0.15s;
+        }
+
+        select:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: var(--border-focus);
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+        }
+
+        #storage-custom {
+            margin-left: 8px;
+            width: 160px;
+        }
+
         .btn {
             display: inline-flex;
             align-items: center;
@@ -284,6 +307,19 @@
         <label for="conf-input">.conf file contents</label>
         <textarea id="conf-input"
                   placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.1.1.1/32&#10;DNS = 1.1.1.1&#10;Jc = 2&#10;Jmin = 1&#10;Jmax = 500&#10;S1 = 123&#10;S2 = 12&#10;H1 = 12345&#10;...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = 1.2.3.4:12345&#10;AllowedIPs = 0.0.0.0/0"></textarea>
+        <div style="margin-top:14px">
+            <label for="storage-select">Container storage</label>
+            <select id="storage-select">
+                <option value="disk1">disk1 — internal storage (default)</option>
+                <option value="usb1">usb1 — USB flash drive</option>
+                <option value="usb2">usb2 — USB flash drive (2nd)</option>
+                <option value="sd1">sd1 — SD / microSD card</option>
+                <option value="nvme1">nvme1 — NVMe SSD</option>
+                <option value="sata1">sata1 — SATA drive</option>
+                <option value="__custom">Custom...</option>
+            </select>
+            <input type="text" id="storage-custom" placeholder="e.g. usb1-part1" style="display:none">
+        </div>
         <div class="actions">
             <button class="btn btn-primary" onclick="generate()">Generate commands</button>
             <button class="btn btn-secondary" onclick="clearAll()">Clear</button>
@@ -360,9 +396,12 @@
     // ============================================================
     function renderFields(parsed) {
         var proto = detectProtocol(parsed.interface);
-        var protoBadge = proto === 'v2'
-            ? '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#dbeafe;color:#1e40af;margin-left:8px">AWG v2</span>'
-            : '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#374151;margin-left:8px">AWG v1</span>';
+        var badgeColors = {
+            'v1':   'background:#e5e7eb;color:#374151',
+            'v1.5': 'background:#fef3c7;color:#92400e',
+            'v2':   'background:#dbeafe;color:#1e40af'
+        };
+        var protoBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;' + badgeColors[proto] + ';margin-left:8px">AWG ' + proto + '</span>';
         var html = '<div style="margin-bottom:8px;font-size:0.8rem;color:var(--text-muted)">[Interface] section' + protoBadge + '</div>';
         html += '<div class="fields-grid">';
         IFACE_REQUIRED.concat(IFACE_OPTIONAL).forEach(function (k) {
@@ -472,12 +511,48 @@
         return /^[1-9]\d*$/.test(s);
     }
 
+    function isValidCPSTemplate(s) {
+        if (!s || !s.trim()) return false;
+        var i = 0;
+        var count = 0;
+        while (i < s.length) {
+            if (s[i] === ' ' || s[i] === '\t' || s[i] === '\n' || s[i] === '\r') { i++; continue; }
+            if (s[i] !== '<') return false;
+            var end = s.indexOf('>', i + 1);
+            if (end < 0) return false;
+            var tag = s.slice(i + 1, end).trim();
+            if (!tag) return false;
+            var kind = tag[0];
+            if (kind === 'b') {
+                var hex = tag.slice(1).trim();
+                if (hex.length < 3 || hex.slice(0, 2).toLowerCase() !== '0x') return false;
+                if (!/^[0-9a-fA-F]*$/.test(hex.slice(2)) || hex.length < 4 || (hex.length - 2) % 2 !== 0) return false;
+            } else if (kind === 'r') {
+                if (tag.length > 1 && (tag[1] === 'c' || tag[1] === 'd')) {
+                    var n = tag.slice(2).trim();
+                    if (!/^[1-9]\d*$/.test(n)) return false;
+                } else {
+                    var n = tag.slice(1).trim();
+                    if (!/^[1-9]\d*$/.test(n)) return false;
+                }
+            } else if (kind === 't' || kind === 'c') {
+                if (tag.trim().length !== 1) return false;
+            } else {
+                return false;
+            }
+            count++;
+            i = end + 1;
+        }
+        return count > 0;
+    }
+
     function detectProtocol(iface) {
-        if (iface.S3 || iface.S4 || iface.I1 ||
-            (iface.H1 && iface.H1.indexOf('-') >= 0) ||
+        var hasHRange = (iface.H1 && iface.H1.indexOf('-') >= 0) ||
             (iface.H2 && iface.H2.indexOf('-') >= 0) ||
             (iface.H3 && iface.H3.indexOf('-') >= 0) ||
-            (iface.H4 && iface.H4.indexOf('-') >= 0)) return 'v2';
+            (iface.H4 && iface.H4.indexOf('-') >= 0);
+        if (iface.S3 || iface.S4 || hasHRange) return 'v2';
+        if (iface.I1 || iface.I2 || iface.I3 || iface.I4 || iface.I5) return 'v1.5';
         return 'v1';
     }
 
@@ -544,6 +619,11 @@
         if (peer.PersistentKeepalive && !isPositiveInt(peer.PersistentKeepalive))
             errors.push('[Peer] PersistentKeepalive -- must be a positive integer');
 
+        ['I1','I2','I3','I4','I5'].forEach(function(k) {
+            if (iface[k] && !isValidCPSTemplate(iface[k]))
+                errors.push('[Interface] ' + k + ' -- invalid CPS template (valid tags: <b 0xHEX>, <r N>, <rc N>, <rd N>, <t>, <c>)');
+        });
+
         return errors;
     }
 
@@ -558,7 +638,7 @@
     // ============================================================
     // Generate uninstall script as /system/script/add command
     // ============================================================
-    function buildUninstallScriptSource(hasDNS) {
+    function buildUninstallScriptSource(hasDNS, storageDisk) {
         var src = [];
         src.push('/system/script/add name=awg-proxy-uninstall comment=awg-proxy source={');
         src.push('  :put "Uninstallimg AmneziaWG..."');
@@ -589,7 +669,7 @@
         src.push('  /ip/address/remove [find where interface="wg-awg-proxy"]');
         src.push('  /interface/wireguard/remove [find where name="wg-awg-proxy"]');
         src.push('  :do { /file/remove [find where name~"awg-proxy.+tar"] } on-error={}');
-        src.push('  :do { /file/remove [find where name="disk1/awg-proxy"] } on-error={}');
+        src.push('  :do { /file/remove [find where name="' + storageDisk + '/awg-proxy"] } on-error={}');
         src.push('  :put "Uninstall AmneziaWG Proxy complete!"');
         src.push('  :log info "Uninstall AmneziaWG Proxy complete!"');
         src.push('  /system/script/remove [find where name=awg-proxy-uninstall]');
@@ -600,7 +680,7 @@
     // ============================================================
     // Generate MikroTik commands
     // ============================================================
-    function buildCommands(parsed) {
+    function buildCommands(parsed, storageDisk) {
         var i = parsed.interface;
         var p = parsed.peer;
         var dnsServers = parseDNSServers(i.DNS);
@@ -613,9 +693,10 @@
             ' allowed-address=' + p.AllowedIPs.replace(/\s*,\s*/g, ',');
         if (p.PersistentKeepalive) peerAdd += ' persistent-keepalive=' + p.PersistentKeepalive;
 
+        var detectedProto = detectProtocol(i);
         var lines = [
             '# ============================================================',
-            '# AWG Proxy -- MikroTik RouterOS',
+            '# AWG Proxy -- MikroTik RouterOS (protocol: ' + detectedProto + ')',
             '# ' + new Date().toISOString().slice(0, 19).replace('T', ' '),
             '# ============================================================',
             '',
@@ -628,7 +709,7 @@
             '# 1. Uninstall script',
         ];
 
-        lines.push(buildUninstallScriptSource(hasDNS));
+        lines.push(buildUninstallScriptSource(hasDNS, storageDisk));
 
         lines = lines.concat([
             '',
@@ -700,7 +781,7 @@
             '  } else={',
             '    :put "File $file already exists, skipping download"',
             '  }',
-            '  /container/add file=$file interface=veth-awg-proxy envlist=awg-proxy-env hostname=awg-proxy root-dir=disk1/awg-proxy logging=yes shm-size=4M start-on-boot=yes comment=awg-proxy',
+            '  /container/add file=$file interface=veth-awg-proxy envlist=awg-proxy-env hostname=awg-proxy root-dir=' + storageDisk + '/awg-proxy logging=yes shm-size=4M start-on-boot=yes comment=awg-proxy',
             '  /file/remove $file',
             '  :local freeMem [/system/resource/get free-memory]',
             '  :if ($freeMem < 16777216) do={',
@@ -726,6 +807,19 @@
         lines = lines.concat([
             '  :put ""',
             '  :put "======= NEXT STEPS ======="',
+        ]);
+
+        if (detectedProto !== 'v2') {
+            lines = lines.concat([
+                '  :put ""',
+                '  :put "  NOTE: Your config uses AWG ' + detectedProto + '. For better obfuscation,"',
+                '  :put "  update AmneziaVPN to the latest version and regenerate the config."',
+                '  :put "  Latest version supports AWG v2 with H-ranges and S3/S4 padding."',
+            ]);
+        }
+
+        lines = lines.concat([
+            '  :put ""',
             '  :put "Route specific traffic through the AmneziaWG tunnel:"',
             '  :put ""',
             '  :put "  Route a single host:"',
@@ -770,6 +864,29 @@
     }
 
     // ============================================================
+    // Storage selector
+    // ============================================================
+    document.getElementById('storage-select').addEventListener('change', function() {
+        var custom = document.getElementById('storage-custom');
+        if (this.value === '__custom') {
+            custom.style.display = 'inline-block';
+            custom.focus();
+        } else {
+            custom.style.display = 'none';
+            custom.value = '';
+        }
+    });
+
+    function getStorageDisk() {
+        var sel = document.getElementById('storage-select').value;
+        if (sel === '__custom') {
+            var v = document.getElementById('storage-custom').value.trim();
+            return v || 'disk1';
+        }
+        return sel;
+    }
+
+    // ============================================================
     // Main
     // ============================================================
     function generate() {
@@ -802,7 +919,7 @@
             return;
         }
 
-        var commands = buildCommands(parsed);
+        var commands = buildCommands(parsed, getStorageDisk());
         document.getElementById('output').dataset.plain = commands;
         document.getElementById('output').innerHTML = highlight(commands);
         document.getElementById('output-section').style.display = 'block';
@@ -831,6 +948,9 @@
         document.getElementById('parsed-section').style.display = 'none';
         document.getElementById('output-section').style.display = 'none';
         document.getElementById('uninstall-section').style.display = 'none';
+        document.getElementById('storage-select').value = 'disk1';
+        document.getElementById('storage-custom').style.display = 'none';
+        document.getElementById('storage-custom').value = '';
         document.getElementById('conf-input').focus();
     }
 

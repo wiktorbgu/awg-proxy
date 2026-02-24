@@ -16,17 +16,22 @@ import (
 func main() {
 	cfg, listenAddr, remoteAddr, err := parseEnv()
 	if err != nil {
-		io.WriteString(os.Stderr, "FATAL: "+err.Error()+"\n")
+		_, _ = io.WriteString(os.Stderr, "FATAL: "+err.Error()+"\n")
 		os.Exit(1)
 	}
 
+	// Определяем версию протокола AmneziaWG по параметрам конфига.
+	// v2: если S3 или S4 ненулевые, или хотя бы один H задан диапазоном (Min != Max).
+	// v1.5: если нет признаков v2, но задан хотя бы один CPS-шаблон (I1-I5).
+	// v1: всё остальное — фиксированные H, без CPS, без S3/S4.
 	mode := "v1"
 	if cfg.S3 > 0 || cfg.S4 > 0 ||
 		cfg.H1.Min != cfg.H1.Max || cfg.H2.Min != cfg.H2.Max ||
-		cfg.H3.Min != cfg.H3.Max || cfg.H4.Min != cfg.H4.Max ||
-		cfg.CPS[0] != nil || cfg.CPS[1] != nil || cfg.CPS[2] != nil ||
-		cfg.CPS[3] != nil || cfg.CPS[4] != nil {
+		cfg.H3.Min != cfg.H3.Max || cfg.H4.Min != cfg.H4.Max {
 		mode = "v2"
+	} else if cfg.CPS[0] != nil || cfg.CPS[1] != nil || cfg.CPS[2] != nil ||
+		cfg.CPS[3] != nil || cfg.CPS[4] != nil {
+		mode = "v1.5"
 	}
 
 	awg.LogInfo(cfg, "starting awg-proxy mode=", mode)
@@ -45,7 +50,7 @@ func main() {
 	}()
 
 	if err := proxy.Run(stop); err != nil {
-		io.WriteString(os.Stderr, "FATAL: "+err.Error()+"\n")
+		_, _ = io.WriteString(os.Stderr, "FATAL: "+err.Error()+"\n")
 		os.Exit(1)
 	}
 }

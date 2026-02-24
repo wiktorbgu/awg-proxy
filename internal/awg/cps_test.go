@@ -65,6 +65,129 @@ func TestParseCPSCounter(t *testing.T) {
 	}
 }
 
+func TestParseCPSRandomChars(t *testing.T) {
+	tmpl, err := ParseCPSTemplate("<rc 12>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpl.segments) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(tmpl.segments))
+	}
+	seg := tmpl.segments[0]
+	if seg.kind != cpsRandomChars {
+		t.Fatalf("expected kind cpsRandomChars, got %c", seg.kind)
+	}
+	if seg.size != 12 {
+		t.Fatalf("expected size 12, got %d", seg.size)
+	}
+}
+
+func TestParseCPSRandomDigits(t *testing.T) {
+	tmpl, err := ParseCPSTemplate("<rd 8>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpl.segments) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(tmpl.segments))
+	}
+	seg := tmpl.segments[0]
+	if seg.kind != cpsRandomDigits {
+		t.Fatalf("expected kind cpsRandomDigits, got %c", seg.kind)
+	}
+	if seg.size != 8 {
+		t.Fatalf("expected size 8, got %d", seg.size)
+	}
+}
+
+func TestGenerateRandomChars(t *testing.T) {
+	tmpl, err := ParseCPSTemplate("<rc 20>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkt := tmpl.Generate(0)
+	if len(pkt) != 20 {
+		t.Fatalf("expected 20 bytes, got %d", len(pkt))
+	}
+	for i, b := range pkt {
+		if !isAlphanumeric(b) {
+			t.Fatalf("byte %d: 0x%x is not alphanumeric", i, b)
+		}
+	}
+}
+
+func TestGenerateRandomDigits(t *testing.T) {
+	tmpl, err := ParseCPSTemplate("<rd 10>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkt := tmpl.Generate(0)
+	if len(pkt) != 10 {
+		t.Fatalf("expected 10 bytes, got %d", len(pkt))
+	}
+	for i, b := range pkt {
+		if b < '0' || b > '9' {
+			t.Fatalf("byte %d: 0x%x is not a digit", i, b)
+		}
+	}
+}
+
+func isAlphanumeric(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
+func TestParseCPSMixedWithRcRd(t *testing.T) {
+	tmpl, err := ParseCPSTemplate("<b 0xDEAD> <rc 8> <t> <rd 4>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpl.segments) != 4 {
+		t.Fatalf("expected 4 segments, got %d", len(tmpl.segments))
+	}
+	kinds := []byte{cpsStatic, cpsRandomChars, cpsTimestamp, cpsRandomDigits}
+	for i, seg := range tmpl.segments {
+		if seg.kind != kinds[i] {
+			t.Fatalf("segment %d: expected kind %c, got %c", i, kinds[i], seg.kind)
+		}
+	}
+	pkt := tmpl.Generate(0)
+	// 2 (static) + 8 (rc) + 4 (timestamp) + 4 (rd) = 18
+	if len(pkt) != 18 {
+		t.Fatalf("expected 18 bytes, got %d", len(pkt))
+	}
+	if pkt[0] != 0xDE || pkt[1] != 0xAD {
+		t.Fatalf("static bytes mismatch")
+	}
+	for i := 2; i < 10; i++ {
+		if !isAlphanumeric(pkt[i]) {
+			t.Fatalf("rc byte %d: 0x%x is not alphanumeric", i, pkt[i])
+		}
+	}
+	for i := 14; i < 18; i++ {
+		if pkt[i] < '0' || pkt[i] > '9' {
+			t.Fatalf("rd byte %d: 0x%x is not a digit", i, pkt[i])
+		}
+	}
+}
+
+func TestParseCPSRcRdInvalid(t *testing.T) {
+	cases := []string{
+		"<rc>",     // no size
+		"<rc abc>", // non-numeric
+		"<rc 0>",   // zero
+		"<rc -1>",  // negative
+		"<rd>",     // no size
+		"<rd abc>", // non-numeric
+		"<rd 0>",   // zero
+		"<rd -1>",  // negative
+	}
+	for _, tc := range cases {
+		_, err := ParseCPSTemplate(tc)
+		if err == nil {
+			t.Fatalf("expected error for %q, got nil", tc)
+		}
+	}
+}
+
 func TestParseCPSMultiSegment(t *testing.T) {
 	tmpl, err := ParseCPSTemplate("<b 0xAABB> <r 8> <t> <c>")
 	if err != nil {

@@ -1,5 +1,9 @@
 # awg-proxy -- AmneziaWG for MikroTik
 
+[![Tests](https://github.com/amneziawg-mikrotik/awg-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/amneziawg-mikrotik/awg-proxy/actions/workflows/build.yml)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.25-blue)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 [Русская версия](README.md)
 
 Lightweight Docker container that allows MikroTik routers to connect to AmneziaWG servers. All traffic is encrypted by the router's native WireGuard client; the container only transforms the packet format.

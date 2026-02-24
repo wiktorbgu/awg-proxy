@@ -31,11 +31,14 @@ jobs:
       - name: Bump version tag
         id: tag
         run: |
-          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST=$(git tag -l 'v*' | sort -V | tail -1)
+          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
           MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
           MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
           PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
           NEW="v${MAJOR}.${MINOR}.$((PATCH+1))"
+          git tag "$NEW"
+          git push origin "$NEW"
           echo "tag=$NEW" >> "$GITHUB_OUTPUT"
           echo "$LATEST -> $NEW"
 

@@ -18,10 +18,10 @@ func ams42Config() *Config {
 		Jmax:     50,
 		S1:       46,
 		S2:       122,
-		H1:       1033089720,
-		H2:       1336452505,
-		H3:       1858775673,
-		H4:       332219739,
+		H1:       HRange{Min: 1033089720, Max: 1033089720},
+		H2:       HRange{Min: 1336452505, Max: 1336452505},
+		H3:       HRange{Min: 1858775673, Max: 1858775673},
+		H4:       HRange{Min: 332219739, Max: 332219739},
 		Timeout:  180,
 		LogLevel: LevelInfo,
 	}
@@ -177,8 +177,8 @@ func TestProxyForwardsHandshakeInit(t *testing.T) {
 
 	// Check H1 type at offset S1.
 	gotType := binary.LittleEndian.Uint32(hsInit[cfg.S1 : cfg.S1+4])
-	if gotType != cfg.H1 {
-		t.Fatalf("handshake init type: expected H1=%d, got %d", cfg.H1, gotType)
+	if !cfg.H1.Contains(gotType) {
+		t.Fatalf("handshake init type: expected H1=%d, got %d", cfg.H1.Min, gotType)
 	}
 	t.Logf("H1 type at offset S1=%d: %d (correct)", cfg.S1, gotType)
 
@@ -234,7 +234,7 @@ func TestProxyForwardsHandshakeResponse(t *testing.T) {
 	// Step 2: From mock server, send back a transformed handshake response.
 	// Build AWG handshake response: S2 padding + H2 type + 92 bytes total inner.
 	innerResponse := make([]byte, WgHandshakeResponseSize)
-	binary.LittleEndian.PutUint32(innerResponse[:4], cfg.H2)
+	binary.LittleEndian.PutUint32(innerResponse[:4], cfg.H2.Min)
 	for i := 4; i < WgHandshakeResponseSize; i++ {
 		innerResponse[i] = byte(i + 100) // distinct payload
 	}
@@ -367,8 +367,8 @@ func TestProxyForwardsTransportData(t *testing.T) {
 	}
 
 	gotType := binary.LittleEndian.Uint32(pkt[:4])
-	if gotType != cfg.H4 {
-		t.Fatalf("transport packet: expected H4=%d, got %d", cfg.H4, gotType)
+	if !cfg.H4.Contains(gotType) {
+		t.Fatalf("transport packet: expected H4=%d, got %d", cfg.H4.Min, gotType)
 	}
 	t.Logf("transport packet type: H4=%d (correct)", gotType)
 
@@ -420,7 +420,7 @@ func TestProxyRealAWGServer(t *testing.T) {
 	t.Logf("proxy will listen on %s", proxyAddr.String())
 	t.Logf("remote AWG server: %s", remoteAddr.String())
 	t.Logf("config: Jc=%d Jmin=%d Jmax=%d S1=%d S2=%d H1=%d H2=%d H3=%d H4=%d",
-		cfg.Jc, cfg.Jmin, cfg.Jmax, cfg.S1, cfg.S2, cfg.H1, cfg.H2, cfg.H3, cfg.H4)
+		cfg.Jc, cfg.Jmin, cfg.Jmax, cfg.S1, cfg.S2, cfg.H1.Min, cfg.H2.Min, cfg.H3.Min, cfg.H4.Min)
 
 	proxy := NewProxy(cfg, proxyAddr, remoteAddr)
 	stop := make(chan struct{})

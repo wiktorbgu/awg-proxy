@@ -20,6 +20,7 @@ type Proxy struct {
 	clientAddr atomic.Pointer[net.UDPAddr]
 	pool       sync.Pool
 	lastRecv   atomic.Int64 // unix timestamp of last packet from server
+	cpsCounter uint32       // counter for CPS <c> tags
 }
 
 // NewProxy creates a new Proxy instance.
@@ -118,6 +119,16 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 		LogDebug(p.cfg, "c->s: recv ", strconv.Itoa(n), "B, send ", strconv.Itoa(len(out)), "B, junk=", strconv.FormatBool(sendJunk))
 
 		if sendJunk {
+			// CPS packets (I1->I2->I3->I4->I5).
+			cpsPackets := GenerateCPSPackets(p.cfg.CPS, &p.cpsCounter)
+			for ci, pkt := range cpsPackets {
+				if _, err := currentRemote.Write(pkt); err != nil {
+					LogDebug(p.cfg, "c->s: cps ", strconv.Itoa(ci), " write err: ", err.Error())
+					break
+				}
+				LogDebug(p.cfg, "c->s: cps ", strconv.Itoa(ci+1), "/", strconv.Itoa(len(cpsPackets)), " ", strconv.Itoa(len(pkt)), "B sent")
+			}
+			// Junk packets.
 			junkPackets := GenerateJunkPackets(p.cfg)
 			for i, junk := range junkPackets {
 				if _, err := currentRemote.Write(junk); err != nil {

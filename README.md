@@ -28,6 +28,13 @@ MikroTik handles all WireGuard cryptography natively using its built-in WG clien
 - **Outbound (WG to AWG):** replaces standard WireGuard message type headers with AmneziaWG values (H1--H4), prepends random padding to handshake packets (S1/S2 bytes), sends junk packets before handshake initiation (Jc packets of Jmin--Jmax bytes), and recomputes MAC1 using the server's public key so the AWG server accepts the packet.
 - **Inbound (AWG to WG):** reverses type replacement, strips padding from handshake packets, recomputes MAC1 using the client's public key so MikroTik accepts the response, and silently drops junk packets.
 
+### Protocol versions
+
+The proxy automatically detects which protocol version is in use based on the environment variables provided:
+
+- **v1 (default):** fixed H1--H4 type values, S1/S2 padding, simple random junk packets. Compatible with all standard AmneziaWG servers.
+- **v2:** superset of v1. Activated when any of the following optional variables are set: `AWG_S3`, `AWG_S4`, H-parameter ranges (e.g. `AWG_H1=1000-2000`), or `AWG_I1`--`AWG_I5` CPS templates. v2 features are described in the [Configuration Reference](#configuration-reference) below.
+
 No tunnel data or session keys are modified. The proxy is completely transparent to the WireGuard protocol layer.
 
 ## Quick Start
@@ -174,12 +181,34 @@ All configuration is done through environment variables passed to the container.
 | `AWG_H4` | Yes | -- | Replacement message type for transport data |
 | `AWG_SERVER_PUB` | Yes | -- | AWG server public key (base64), used for MAC1 recomputation on outbound handshake packets |
 | `AWG_CLIENT_PUB` | Yes | -- | WG client public key (base64), auto-derived from WG interface (see Step 5) |
+| `AWG_S3` | No | `0` | (v2) Random padding prepended to cookie reply packets (bytes) |
+| `AWG_S4` | No | `0` | (v2) Random padding prepended to transport data packets (bytes) |
+| `AWG_I1`--`AWG_I5` | No | -- | (v2) CPS junk packet templates (see [CPS templates](#cps-templates-v2)) |
 | `AWG_TIMEOUT` | No | `180` | Inactivity timeout in seconds before reconnecting |
 | `AWG_LOG_LEVEL` | No | `info` | Log verbosity: `none`, `error`, or `info` |
 
+H1--H4 accept either a fixed integer (`1234567890`) or a range (`1000000000-2000000000`). When a range is given, each packet gets a fresh random value drawn from that range. The receiver scans candidate offsets to locate a valid MAC1, so both endpoints must agree on the same range.
+
+### CPS templates (v2)
+
+`AWG_I1` through `AWG_I5` define up to five structured junk packets sent before each handshake initiation. When any `AWG_Ix` variable is set, these replace the default random junk packets for that slot (unset slots are skipped). Templates are composed of angle-bracket tags in order:
+
+| Tag | Description |
+|---|---|
+| `<r N>` | N random bytes |
+| `<b 0xHEX>` | literal bytes given as hex (e.g. `<b 0xdeadbeef>`) |
+| `<t>` | 4-byte little-endian Unix timestamp |
+| `<c>` | 4-byte little-endian packet counter (increments per packet) |
+
+Example -- a 36-byte packet with a 4-byte magic, a timestamp, and 28 random bytes:
+
+```
+AWG_I1=<b 0xdeadbeef><t><r 28>
+```
+
 ## Getting AWG Parameters
 
-The Jc, Jmin, Jmax, S1, S2, H1--H4 values must match your AmneziaWG server configuration exactly. To obtain them:
+The Jc, Jmin, Jmax, S1, S2, H1--H4 values must match your AmneziaWG server configuration exactly. v2 parameters (S3, S4, I1--I5) are optional and can be omitted if your server does not use them. To obtain the parameters:
 
 ### Export from AmneziaVPN
 

@@ -6,12 +6,15 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/amneziawg-mikrotik/awg-proxy/internal/awg"
 )
+
+var version = "dev"
 
 func main() {
 	cfg, listenAddr, remoteAddr, err := parseEnv()
@@ -34,8 +37,17 @@ func main() {
 		mode = "v1.5"
 	}
 
-	awg.LogInfo(cfg, "starting awg-proxy mode=", mode)
+	maxProcs := 2
+	if v := os.Getenv("AWG_GOMAXPROCS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxProcs = n
+		}
+	}
+	runtime.GOMAXPROCS(maxProcs)
+
+	awg.LogInfo(cfg, "awg-proxy ", version, " ", runtime.GOOS, "/", runtime.GOARCH, " mode=", mode)
 	awg.LogInfo(cfg, "listen=", listenAddr.String(), " remote=", remoteAddr.String())
+	awg.LogInfo(cfg, "GOMAXPROCS=", strconv.Itoa(maxProcs))
 
 	proxy := awg.NewProxy(cfg, listenAddr, remoteAddr)
 

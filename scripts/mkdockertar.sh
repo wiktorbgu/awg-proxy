@@ -18,8 +18,9 @@ trap 'rm -rf "$WORK"' EXIT
 # --- 1. Cross-compile binary ---
 GOARM_ENV=""
 if [ -n "$GOARM" ]; then GOARM_ENV="GOARM=$GOARM"; fi
+BUILD_VERSION="${VERSION:-dev}"
 env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" $GOARM_ENV \
-    go build -trimpath -ldflags="-s -w" -o "$WORK/awg-proxy" .
+    go build -trimpath -ldflags="-s -w -X main.version=$BUILD_VERSION" -o "$WORK/awg-proxy" .
 
 # --- 2. Create layer tar (--mode=0755: NTFS has no execute bit) ---
 tar cf "$WORK/layer.tar" --mode=0755 -C "$WORK" awg-proxy

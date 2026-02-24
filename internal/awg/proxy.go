@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -20,23 +21,18 @@ type Proxy struct {
 	remoteAddr *net.UDPAddr
 	clientAddr atomic.Pointer[netip.AddrPort]
 	remoteConn atomic.Pointer[net.UDPConn]
-	pool       sync.Pool
+	stopped    atomic.Bool
 	lastRecv   atomic.Int64 // unix timestamp of last packet from server
 	cpsCounter uint32       // counter for CPS <c> tags
 }
 
 // NewProxy creates a new Proxy instance.
 func NewProxy(cfg *Config, listenAddr, remoteAddr *net.UDPAddr) *Proxy {
-	p := &Proxy{
+	return &Proxy{
 		cfg:        cfg,
 		listenAddr: listenAddr,
 		remoteAddr: remoteAddr,
 	}
-	p.pool.New = func() any {
-		b := make([]byte, bufSize)
-		return &b
-	}
-	return p
 }
 
 func setSocketBuffers(conn *net.UDPConn, size int) {
@@ -64,7 +60,13 @@ func (p *Proxy) Run(stop <-chan struct{}) error {
 	p.lastRecv.Store(time.Now().Unix())
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		<-stop
+		p.stopped.Store(true)
+	}()
 
 	go func() {
 		defer wg.Done()
@@ -84,21 +86,17 @@ func (p *Proxy) Run(stop <-chan struct{}) error {
 }
 
 func (p *Proxy) clientToServer(listenConn *net.UDPConn, stop <-chan struct{}) {
+	runtime.LockOSThread()
+	buf := make([]byte, bufSize)
 	listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 
 	for {
-		select {
-		case <-stop:
+		if p.stopped.Load() {
 			return
-		default:
 		}
-
-		bufp := p.pool.Get().(*[]byte)
-		buf := *bufp
 
 		n, addr, err := listenConn.ReadFromUDPAddrPort(buf)
 		if err != nil {
-			p.pool.Put(bufp)
 			if isTimeout(err) {
 				listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 				continue
@@ -155,7 +153,6 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn, stop <-chan struct{}) {
 		}
 
 		_, err = currentRemote.Write(out)
-		p.pool.Put(bufp)
 		if err != nil {
 			if isClosedErr(err) {
 				continue // reconnect in progress, WG will retransmit
@@ -168,6 +165,8 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn, stop <-chan struct{}) {
 }
 
 func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn, stop <-chan struct{}) {
+	runtime.LockOSThread()
+	buf := make([]byte, bufSize)
 	currentRemote := remoteConn
 	timeout := time.Duration(p.cfg.Timeout) * time.Second
 	if timeout <= 0 {
@@ -178,18 +177,12 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 	currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 
 	for {
-		select {
-		case <-stop:
+		if p.stopped.Load() {
 			return
-		default:
 		}
-
-		bufp := p.pool.Get().(*[]byte)
-		buf := *bufp
 
 		n, err := currentRemote.Read(buf)
 		if err != nil {
-			p.pool.Put(bufp)
 			if isTimeout(err) {
 				currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 				// Check inactivity timeout.
@@ -237,7 +230,6 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 			if p.cfg.LogLevel >= LevelDebug {
 				LogDebug(p.cfg, "s->c: invalid/junk packet ", strconv.Itoa(n), "B, dropped")
 			}
-			p.pool.Put(bufp)
 			continue
 		}
 
@@ -256,7 +248,6 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 		} else if p.cfg.LogLevel >= LevelDebug {
 			LogDebug(p.cfg, "s->c: no client addr, packet dropped")
 		}
-		p.pool.Put(bufp)
 	}
 }
 

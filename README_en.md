@@ -29,7 +29,7 @@ Done. The configurator works offline; no data is sent to any server.
 - An AmneziaWG server with known obfuscation parameters
 - Configuration file `.conf` exported from AmneziaVPN
 - MikroTik RouterOS 7.4+ with the **container** package
-- Architecture: ARM64, ARM (v7), or x86_64 ([check your device](https://help.mikrotik.com/docs/spaces/ROS/pages/47579139/Container))
+- Architecture: ARM64, ARM (v7), or x86_64 ([check your device](https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container))
 - At least 5 MB disk space, 16+ MB RAM recommended
 
 ## Manual Installation

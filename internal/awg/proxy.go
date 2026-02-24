@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -22,8 +21,8 @@ type Proxy struct {
 	clientAddr atomic.Pointer[netip.AddrPort]
 	remoteConn atomic.Pointer[net.UDPConn]
 	stopped    atomic.Bool
-	lastRecv   atomic.Int64 // unix timestamp of last packet from server
-	cpsCounter uint32       // counter for CPS <c> tags
+	lastActive atomic.Bool // activity flag; set on recv, cleared by timeout checker
+	cpsCounter uint32      // counter for CPS <c> tags
 }
 
 // NewProxy creates a new Proxy instance.
@@ -57,20 +56,61 @@ func (p *Proxy) Run(stop <-chan struct{}) error {
 	setSocketBuffers(remoteConn, 2*1024*1024)
 
 	p.remoteConn.Store(remoteConn)
-	p.lastRecv.Store(time.Now().Unix())
+	p.lastActive.Store(true)
+
+	timeout := time.Duration(p.cfg.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 180 * time.Second
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(3)
 
+	// Stop handler: close connections to unblock read goroutines.
 	go func() {
 		defer wg.Done()
 		<-stop
 		p.stopped.Store(true)
+		listenConn.Close()
+		if rc := p.remoteConn.Load(); rc != nil {
+			rc.Close()
+		}
+	}()
+
+	// Timeout checker: periodically check for inactivity and trigger reconnect.
+	go func() {
+		const checkInterval = 5 * time.Second
+		ticker := time.NewTicker(checkInterval)
+		defer ticker.Stop()
+		checksNeeded := int(timeout / checkInterval)
+		if checksNeeded < 1 {
+			checksNeeded = 1
+		}
+		inactiveCount := 0
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if p.lastActive.CompareAndSwap(true, false) {
+					inactiveCount = 0
+				} else {
+					inactiveCount++
+					if inactiveCount >= checksNeeded {
+						LogInfo(p.cfg, "remote timeout, triggering reconnect")
+						if rc := p.remoteConn.Load(); rc != nil {
+							rc.Close()
+						}
+						inactiveCount = 0
+					}
+				}
+			}
+		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		p.clientToServer(listenConn, stop)
+		p.clientToServer(listenConn)
 	}()
 
 	go func() {
@@ -85,27 +125,17 @@ func (p *Proxy) Run(stop <-chan struct{}) error {
 	return nil
 }
 
-func (p *Proxy) clientToServer(listenConn *net.UDPConn, stop <-chan struct{}) {
-	runtime.LockOSThread()
-	buf := make([]byte, bufSize)
-	listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+func (p *Proxy) clientToServer(listenConn *net.UDPConn) {
+	prefix := p.cfg.S4
+	buf := make([]byte, prefix+bufSize)
 
 	for {
-		if p.stopped.Load() {
-			return
-		}
-
-		n, addr, err := listenConn.ReadFromUDPAddrPort(buf)
+		n, addr, err := listenConn.ReadFromUDPAddrPort(buf[prefix : prefix+bufSize])
 		if err != nil {
-			if isTimeout(err) {
-				listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
-				continue
-			}
-			if isClosedErr(err) {
+			if p.stopped.Load() || isClosedErr(err) {
 				return
 			}
 			LogError(p.cfg, "listen read: ", err.Error())
-			listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 			continue
 		}
 
@@ -117,7 +147,7 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn, stop <-chan struct{}) {
 		}
 
 		currentRemote := p.remoteConn.Load()
-		out, sendJunk := TransformOutbound(buf, n, p.cfg)
+		out, sendJunk := TransformOutbound(buf, prefix, n, p.cfg)
 
 		if p.cfg.LogLevel >= LevelDebug {
 			LogDebug(p.cfg, "c->s: recv ", strconv.Itoa(n), "B, send ", strconv.Itoa(len(out)), "B, junk=", strconv.FormatBool(sendJunk))
@@ -165,60 +195,35 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn, stop <-chan struct{}) {
 }
 
 func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn, stop <-chan struct{}) {
-	runtime.LockOSThread()
 	buf := make([]byte, bufSize)
 	currentRemote := remoteConn
-	timeout := time.Duration(p.cfg.Timeout) * time.Second
-	if timeout <= 0 {
-		timeout = 180 * time.Second
-	}
-
 	backoff := time.Second
-	currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
 
 	for {
-		if p.stopped.Load() {
-			return
-		}
-
 		n, err := currentRemote.Read(buf)
 		if err != nil {
-			if isTimeout(err) {
-				currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
-				// Check inactivity timeout.
-				if time.Since(time.Unix(p.lastRecv.Load(), 0)) > timeout {
-					LogInfo(p.cfg, "remote timeout, reconnecting")
-					newConn := p.reconnectRemote(stop, &backoff)
-					if newConn == nil {
-						return // shutdown
-					}
-					currentRemote.Close()
-					currentRemote = newConn
-					p.remoteConn.Store(newConn)
-					setSocketBuffers(newConn, 2*1024*1024)
-					currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
-					p.clientAddr.Store(nil) // reset client
-				}
-				continue
-			}
-			if isClosedErr(err) {
+			if p.stopped.Load() {
 				return
 			}
-			LogError(p.cfg, "remote read: ", err.Error())
-			// Try reconnect on read error.
+			LogInfo(p.cfg, "remote: ", err.Error(), ", reconnecting")
 			newConn := p.reconnectRemote(stop, &backoff)
 			if newConn == nil {
-				return
+				return // shutdown
 			}
 			currentRemote.Close()
 			currentRemote = newConn
 			p.remoteConn.Store(newConn)
 			setSocketBuffers(newConn, 2*1024*1024)
-			currentRemote.SetReadDeadline(time.Now().Add(5 * time.Second))
+			p.lastActive.Store(true)
+			p.clientAddr.Store(nil)
+			if p.stopped.Load() {
+				newConn.Close()
+				return
+			}
 			continue
 		}
 
-		p.lastRecv.Store(time.Now().Unix())
+		p.lastActive.Store(true)
 		backoff = time.Second // reset backoff on success
 
 		if p.cfg.LogLevel >= LevelDebug {
@@ -272,7 +277,7 @@ func (p *Proxy) reconnectRemote(stop <-chan struct{}, backoff *time.Duration) *n
 			conn, err := net.DialUDP("udp", nil, addr)
 			if err == nil {
 				LogInfo(p.cfg, "reconnected to ", addr.String())
-				p.lastRecv.Store(time.Now().Unix())
+				p.lastActive.Store(true)
 				*backoff = time.Second
 				return conn
 			}
@@ -293,11 +298,6 @@ func (p *Proxy) reconnectRemote(stop <-chan struct{}, backoff *time.Duration) *n
 			*backoff = maxBackoff
 		}
 	}
-}
-
-func isTimeout(err error) bool {
-	ne, ok := err.(net.Error)
-	return ok && ne.Timeout()
 }
 
 func isClosedErr(err error) bool {

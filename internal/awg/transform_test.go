@@ -37,7 +37,7 @@ func TestTransformOutboundHandshakeInit(t *testing.T) {
 	payload := make([]byte, WgHandshakeInitSize)
 	copy(payload, original)
 
-	out, sendJunk := TransformOutbound(payload, WgHandshakeInitSize, cfg)
+	out, sendJunk := TransformOutbound(payload, 0, WgHandshakeInitSize, cfg)
 
 	if !sendJunk {
 		t.Fatal("expected sendJunk=true for handshake init")
@@ -64,7 +64,7 @@ func TestTransformOutboundHandshakeResponse(t *testing.T) {
 	payload := make([]byte, WgHandshakeResponseSize)
 	copy(payload, original)
 
-	out, sendJunk := TransformOutbound(payload, WgHandshakeResponseSize, cfg)
+	out, sendJunk := TransformOutbound(payload, 0, WgHandshakeResponseSize, cfg)
 
 	if sendJunk {
 		t.Fatal("expected sendJunk=false for handshake response")
@@ -82,7 +82,7 @@ func TestTransformOutboundCookieReply(t *testing.T) {
 	cfg := testConfig()
 	payload := makePacket(wgCookieReply, WgCookieReplySize)
 
-	out, sendJunk := TransformOutbound(payload, WgCookieReplySize, cfg)
+	out, sendJunk := TransformOutbound(payload, 0, WgCookieReplySize, cfg)
 
 	if sendJunk {
 		t.Fatal("expected sendJunk=false for cookie reply")
@@ -100,7 +100,7 @@ func TestTransformOutboundTransportData(t *testing.T) {
 	cfg := testConfig()
 	payload := makePacket(wgTransportData, 100)
 
-	out, sendJunk := TransformOutbound(payload, 100, cfg)
+	out, sendJunk := TransformOutbound(payload, 0, 100, cfg)
 
 	if sendJunk {
 		t.Fatal("expected sendJunk=false for transport data")
@@ -187,7 +187,7 @@ func TestRoundtripHandshakeInit(t *testing.T) {
 	saved := make([]byte, WgHandshakeInitSize)
 	copy(saved, original)
 
-	out, _ := TransformOutbound(original, WgHandshakeInitSize, cfg)
+	out, _ := TransformOutbound(original, 0, WgHandshakeInitSize, cfg)
 	result, valid := TransformInbound(out, len(out), cfg)
 	if !valid {
 		t.Fatal("roundtrip: inbound returned invalid")
@@ -214,7 +214,7 @@ func TestRoundtripHandshakeResponse(t *testing.T) {
 	saved := make([]byte, WgHandshakeResponseSize)
 	copy(saved, original)
 
-	out, _ := TransformOutbound(original, WgHandshakeResponseSize, cfg)
+	out, _ := TransformOutbound(original, 0, WgHandshakeResponseSize, cfg)
 	result, valid := TransformInbound(out, len(out), cfg)
 	if !valid {
 		t.Fatal("roundtrip: inbound returned invalid")
@@ -236,7 +236,7 @@ func TestRoundtripCookieReply(t *testing.T) {
 	saved := make([]byte, WgCookieReplySize)
 	copy(saved, original)
 
-	out, _ := TransformOutbound(original, WgCookieReplySize, cfg)
+	out, _ := TransformOutbound(original, 0, WgCookieReplySize, cfg)
 	result, valid := TransformInbound(out, len(out), cfg)
 	if !valid {
 		t.Fatal("roundtrip: inbound returned invalid")
@@ -253,7 +253,7 @@ func TestRoundtripTransportData(t *testing.T) {
 	saved := make([]byte, 200)
 	copy(saved, original)
 
-	out, _ := TransformOutbound(original, 200, cfg)
+	out, _ := TransformOutbound(original, 0, 200, cfg)
 	result, valid := TransformInbound(out, len(out), cfg)
 	if !valid {
 		t.Fatal("roundtrip: inbound returned invalid")
@@ -319,7 +319,7 @@ func TestNoPaddingS1Zero(t *testing.T) {
 	saved := make([]byte, WgHandshakeInitSize)
 	copy(saved, original)
 
-	out, sendJunk := TransformOutbound(original, WgHandshakeInitSize, cfg)
+	out, sendJunk := TransformOutbound(original, 0, WgHandshakeInitSize, cfg)
 	if !sendJunk {
 		t.Fatal("expected sendJunk=true even with S1=0")
 	}
@@ -346,7 +346,7 @@ func TestNoPaddingS2Zero(t *testing.T) {
 	saved := make([]byte, WgHandshakeResponseSize)
 	copy(saved, original)
 
-	out, _ := TransformOutbound(original, WgHandshakeResponseSize, cfg)
+	out, _ := TransformOutbound(original, 0, WgHandshakeResponseSize, cfg)
 	if len(out) != WgHandshakeResponseSize {
 		t.Fatalf("expected len %d with S2=0, got %d", WgHandshakeResponseSize, len(out))
 	}
@@ -364,7 +364,7 @@ func TestNoPaddingS2Zero(t *testing.T) {
 func TestOutboundTooShort(t *testing.T) {
 	cfg := testConfig()
 	buf := []byte{1, 2}
-	out, sendJunk := TransformOutbound(buf, 2, cfg)
+	out, sendJunk := TransformOutbound(buf, 0, 2, cfg)
 	if sendJunk {
 		t.Fatal("expected sendJunk=false for too-short packet")
 	}
@@ -420,7 +420,7 @@ func TestOutboundCookieWithS3(t *testing.T) {
 	cfg.ComputeFastPath()
 	payload := makePacket(wgCookieReply, WgCookieReplySize)
 
-	out, sendJunk := TransformOutbound(payload, WgCookieReplySize, cfg)
+	out, sendJunk := TransformOutbound(payload, 0, WgCookieReplySize, cfg)
 	if sendJunk {
 		t.Fatal("expected sendJunk=false for cookie reply")
 	}
@@ -439,7 +439,7 @@ func TestOutboundTransportWithS4(t *testing.T) {
 	cfg.ComputeFastPath()
 	payload := makePacket(wgTransportData, 100)
 
-	out, sendJunk := TransformOutbound(payload, 100, cfg)
+	out, sendJunk := TransformOutbound(payload, 0, 100, cfg)
 	if sendJunk {
 		t.Fatal("expected sendJunk=false for transport data")
 	}
@@ -543,7 +543,7 @@ func TestRoundtripV2(t *testing.T) {
 	savedInit := make([]byte, WgHandshakeInitSize)
 	copy(savedInit, initPkt)
 
-	out, _ := TransformOutbound(initPkt, WgHandshakeInitSize, cfg)
+	out, _ := TransformOutbound(initPkt, 0, WgHandshakeInitSize, cfg)
 	result, valid := TransformInbound(out, len(out), cfg)
 	if !valid {
 		t.Fatal("v2 roundtrip init: invalid")
@@ -554,7 +554,7 @@ func TestRoundtripV2(t *testing.T) {
 
 	// Roundtrip cookie reply with S3.
 	cookiePkt := makePacket(wgCookieReply, WgCookieReplySize)
-	out, _ = TransformOutbound(cookiePkt, WgCookieReplySize, cfg)
+	out, _ = TransformOutbound(cookiePkt, 0, WgCookieReplySize, cfg)
 	if len(out) != cfg.S3+WgCookieReplySize {
 		t.Fatalf("v2 cookie outbound: expected %d, got %d", cfg.S3+WgCookieReplySize, len(out))
 	}
@@ -571,7 +571,7 @@ func TestRoundtripV2(t *testing.T) {
 	savedTransport := make([]byte, 200)
 	copy(savedTransport, transportPkt)
 
-	out, _ = TransformOutbound(transportPkt, 200, cfg)
+	out, _ = TransformOutbound(transportPkt, 0, 200, cfg)
 	if len(out) != cfg.S4+200 {
 		t.Fatalf("v2 transport outbound: expected %d, got %d", cfg.S4+200, len(out))
 	}
@@ -608,7 +608,7 @@ func TestV1Backward(t *testing.T) {
 
 	// Handshake init roundtrip.
 	initPkt := makePacket(wgHandshakeInit, WgHandshakeInitSize)
-	out, sendJunk := TransformOutbound(initPkt, WgHandshakeInitSize, cfg)
+	out, sendJunk := TransformOutbound(initPkt, 0, WgHandshakeInitSize, cfg)
 	if !sendJunk {
 		t.Fatal("v1 backward: expected sendJunk=true")
 	}
@@ -625,7 +625,7 @@ func TestV1Backward(t *testing.T) {
 
 	// Transport data: no padding with S4=0.
 	transportPkt := makePacket(wgTransportData, 100)
-	out, _ = TransformOutbound(transportPkt, 100, cfg)
+	out, _ = TransformOutbound(transportPkt, 0, 100, cfg)
 	if len(out) != 100 {
 		t.Fatalf("v1 backward: transport expected 100, got %d", len(out))
 	}
@@ -639,7 +639,7 @@ func TestV1Backward(t *testing.T) {
 
 	// Cookie: no padding with S3=0.
 	cookiePkt := makePacket(wgCookieReply, WgCookieReplySize)
-	out, _ = TransformOutbound(cookiePkt, WgCookieReplySize, cfg)
+	out, _ = TransformOutbound(cookiePkt, 0, WgCookieReplySize, cfg)
 	if len(out) != WgCookieReplySize {
 		t.Fatalf("v1 backward: cookie expected %d, got %d", WgCookieReplySize, len(out))
 	}
@@ -663,7 +663,25 @@ func BenchmarkTransformOutboundTransport(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		binary.LittleEndian.PutUint32(buf[:4], wgTransportData)
-		TransformOutbound(buf, 1200, cfg)
+		TransformOutbound(buf, 0, 1200, cfg)
+	}
+}
+
+func BenchmarkTransformOutboundTransportS4(b *testing.B) {
+	cfg := testConfig()
+	cfg.S4 = 17
+	cfg.ComputeFastPath()
+	prefix := cfg.S4
+	buf := make([]byte, prefix+1200)
+	binary.LittleEndian.PutUint32(buf[prefix:prefix+4], wgTransportData)
+	for i := 4; i < 1200; i++ {
+		buf[prefix+i] = byte(i)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		binary.LittleEndian.PutUint32(buf[prefix:prefix+4], wgTransportData)
+		TransformOutbound(buf, prefix, 1200, cfg)
 	}
 }
 
@@ -679,5 +697,14 @@ func BenchmarkTransformInboundTransport(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Min)
 		TransformInbound(buf, 1200, cfg)
+	}
+}
+
+func BenchmarkGenerateJunkPackets(b *testing.B) {
+	cfg := testConfig()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		GenerateJunkPackets(cfg)
 	}
 }

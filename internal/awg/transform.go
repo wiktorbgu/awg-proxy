@@ -108,74 +108,80 @@ func (c *Config) ComputeFastPath() {
 
 // TransformOutbound transforms an outbound WireGuard packet into AmneziaWG format.
 // It returns the transformed packet and whether junk packets should be sent before it.
-// The input buffer must not be reused after this call if padding is applied.
-func TransformOutbound(buf []byte, n int, cfg *Config) (out []byte, sendJunk bool) {
+// buf is the full buffer, dataOff is the offset where packet data starts, n is the data length.
+// For zero-alloc S4 padding, the caller should allocate buf with S4 extra bytes at the start
+// and read data into buf[S4:]. When S4>0 and dataOff>=S4, padding uses the headroom in buf.
+func TransformOutbound(buf []byte, dataOff, n int, cfg *Config) (out []byte, sendJunk bool) {
 	if n < 4 {
-		return buf[:n], false
+		return buf[dataOff : dataOff+n], false
 	}
 
-	msgType := binary.LittleEndian.Uint32(buf[:4])
+	data := buf[dataOff : dataOff+n]
+	msgType := binary.LittleEndian.Uint32(data[:4])
 
 	switch {
 	case msgType == wgHandshakeInit && n == WgHandshakeInitSize:
 		// Replace type and recompute MAC1.
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H1.Pick())
+		binary.LittleEndian.PutUint32(data[:4], cfg.H1.Pick())
 		if cfg.ServerPub != ([32]byte{}) {
-			recomputeMAC1(buf[:n], cfg.mac1keyServer)
+			recomputeMAC1(data, cfg.mac1keyServer)
 		}
 		if cfg.S1 > 0 {
 			out = make([]byte, cfg.S1+n)
 			randFill(out[:cfg.S1])
-			copy(out[cfg.S1:], buf[:n])
+			copy(out[cfg.S1:], data)
 		} else {
-			out = buf[:n]
+			out = data
 		}
 		return out, cfg.Jc > 0
 
 	case msgType == wgHandshakeResponse && n == WgHandshakeResponseSize:
 		// Replace type and prepend S2 padding bytes.
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H2.Pick())
+		binary.LittleEndian.PutUint32(data[:4], cfg.H2.Pick())
 		if cfg.S2 > 0 {
 			out = make([]byte, cfg.S2+n)
 			randFill(out[:cfg.S2])
-			copy(out[cfg.S2:], buf[:n])
+			copy(out[cfg.S2:], data)
 		} else {
-			out = buf[:n]
+			out = data
 		}
 		return out, false
 
 	case msgType == wgCookieReply && n == WgCookieReplySize:
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H3.Pick())
+		binary.LittleEndian.PutUint32(data[:4], cfg.H3.Pick())
 		if cfg.S3 > 0 {
 			out = make([]byte, cfg.S3+n)
 			randFill(out[:cfg.S3])
-			copy(out[cfg.S3:], buf[:n])
+			copy(out[cfg.S3:], data)
 		} else {
-			out = buf[:n]
+			out = data
 		}
 		return out, false
 
 	case msgType == wgTransportData && n >= WgTransportMinSize:
 		if cfg.h4NoOp {
-			return buf[:n], false
+			return data, false
 		}
 		if cfg.H4.Min == cfg.H4.Max {
-			binary.LittleEndian.PutUint32(buf[:4], cfg.h4Fixed)
+			binary.LittleEndian.PutUint32(data[:4], cfg.h4Fixed)
 		} else {
-			binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Pick())
+			binary.LittleEndian.PutUint32(data[:4], cfg.H4.Pick())
 		}
-		if cfg.S4 > 0 {
+		if cfg.S4 > 0 && dataOff >= cfg.S4 {
+			// Zero-alloc: use headroom before dataOff.
+			randFill(buf[dataOff-cfg.S4 : dataOff])
+			return buf[dataOff-cfg.S4 : dataOff+n], false
+		} else if cfg.S4 > 0 {
 			out = make([]byte, cfg.S4+n)
 			randFill(out[:cfg.S4])
-			copy(out[cfg.S4:], buf[:n])
-		} else {
-			out = buf[:n]
+			copy(out[cfg.S4:], data)
+			return out, false
 		}
-		return out, false
+		return data, false
 
 	default:
 		// Unknown packet, pass through unchanged.
-		return buf[:n], false
+		return data, false
 	}
 }
 
@@ -226,6 +232,7 @@ func TransformInbound(buf []byte, n int, cfg *Config) (out []byte, valid bool) {
 }
 
 // GenerateJunkPackets creates Jc junk packets with random sizes in [Jmin, Jmax].
+// Uses 2 allocations instead of Jc+1: one shared data buffer + one slice header.
 func GenerateJunkPackets(cfg *Config) [][]byte {
 	if cfg.Jc <= 0 || cfg.Jmax <= 0 {
 		return nil
@@ -240,15 +247,19 @@ func GenerateJunkPackets(cfg *Config) [][]byte {
 		jmax = jmin
 	}
 
+	// Single data buffer for all junk (upper bound: Jc * Jmax).
+	data := make([]byte, cfg.Jc*jmax)
+	randFill(data)
+
 	packets := make([][]byte, cfg.Jc)
+	off := 0
 	for i := range packets {
 		size := jmin
 		if jmax > jmin {
 			size = jmin + rand.IntN(jmax-jmin+1)
 		}
-		pkt := make([]byte, size)
-		randFill(pkt)
-		packets[i] = pkt
+		packets[i] = data[off : off+size]
+		off += size
 	}
 	return packets
 }

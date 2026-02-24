@@ -37,6 +37,24 @@ const (
 	WgTransportMinSize      = 32
 )
 
+// HRange represents a uint32 range [Min, Max] for v2 H-parameters.
+type HRange struct {
+	Min, Max uint32
+}
+
+// Pick returns a random value in [Min, Max]. Returns Min if Min == Max.
+func (r HRange) Pick() uint32 {
+	if r.Min == r.Max {
+		return r.Min
+	}
+	return r.Min + uint32(rand.IntN(int(r.Max-r.Min+1)))
+}
+
+// Contains returns true if v is in [Min, Max].
+func (r HRange) Contains(v uint32) bool {
+	return v >= r.Min && v <= r.Max
+}
+
 // Config holds AmneziaWG obfuscation parameters.
 type Config struct {
 	Jc   int    // junk packet count before handshake init
@@ -44,10 +62,14 @@ type Config struct {
 	Jmax int    // max junk packet size
 	S1   int    // padding bytes prepended to handshake init
 	S2   int    // padding bytes prepended to handshake response
-	H1   uint32 // replacement type for handshake init
-	H2   uint32 // replacement type for handshake response
-	H3   uint32 // replacement type for cookie reply
-	H4   uint32 // replacement type for transport data
+	S3   int    // padding bytes prepended to cookie reply (v2, default 0)
+	S4   int    // padding bytes prepended to transport data (v2, default 0)
+	H1   HRange // replacement type for handshake init
+	H2   HRange // replacement type for handshake response
+	H3   HRange // replacement type for cookie reply
+	H4   HRange // replacement type for transport data
+
+	CPS [5]*CPSTemplate // I1-I5 CPS templates (v2, nil = not configured)
 
 	ServerPub     [32]byte // AWG server public key (for outbound MAC1 recomputation)
 	ClientPub     [32]byte // WG client public key (for inbound MAC1 recomputation)
@@ -85,7 +107,7 @@ func TransformOutbound(buf []byte, n int, cfg *Config) (out []byte, sendJunk boo
 	switch {
 	case msgType == wgHandshakeInit && n == WgHandshakeInitSize:
 		// Replace type and recompute MAC1.
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H1)
+		binary.LittleEndian.PutUint32(buf[:4], cfg.H1.Pick())
 		if cfg.ServerPub != ([32]byte{}) {
 			recomputeMAC1(buf[:n], cfg.mac1keyServer)
 		}
@@ -100,7 +122,7 @@ func TransformOutbound(buf []byte, n int, cfg *Config) (out []byte, sendJunk boo
 
 	case msgType == wgHandshakeResponse && n == WgHandshakeResponseSize:
 		// Replace type and prepend S2 padding bytes.
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H2)
+		binary.LittleEndian.PutUint32(buf[:4], cfg.H2.Pick())
 		if cfg.S2 > 0 {
 			out = make([]byte, cfg.S2+n)
 			randFill(out[:cfg.S2])
@@ -111,14 +133,26 @@ func TransformOutbound(buf []byte, n int, cfg *Config) (out []byte, sendJunk boo
 		return out, false
 
 	case msgType == wgCookieReply && n == WgCookieReplySize:
-		// Replace type, no padding.
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H3)
-		return buf[:n], false
+		binary.LittleEndian.PutUint32(buf[:4], cfg.H3.Pick())
+		if cfg.S3 > 0 {
+			out = make([]byte, cfg.S3+n)
+			randFill(out[:cfg.S3])
+			copy(out[cfg.S3:], buf[:n])
+		} else {
+			out = buf[:n]
+		}
+		return out, false
 
 	case msgType == wgTransportData && n >= WgTransportMinSize:
-		// Hot path: replace type in-place, no allocation.
-		binary.LittleEndian.PutUint32(buf[:4], cfg.H4)
-		return buf[:n], false
+		binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Pick())
+		if cfg.S4 > 0 {
+			out = make([]byte, cfg.S4+n)
+			randFill(out[:cfg.S4])
+			copy(out[cfg.S4:], buf[:n])
+		} else {
+			out = buf[:n]
+		}
+		return out, false
 
 	default:
 		// Unknown packet, pass through unchanged.
@@ -128,80 +162,39 @@ func TransformOutbound(buf []byte, n int, cfg *Config) (out []byte, sendJunk boo
 
 // TransformInbound transforms an inbound AmneziaWG packet back to standard WireGuard format.
 // Returns the transformed packet and whether it is valid (junk packets return valid=false).
+// Uses scanning to find the header at offsets [0, maxScan] to handle S1-S4 padding.
 func TransformInbound(buf []byte, n int, cfg *Config) (out []byte, valid bool) {
 	if n < 4 {
 		return nil, false
 	}
 
-	// Check for handshake init with S1 padding: total size = S1 + 148.
-	if cfg.S1 > 0 && n == cfg.S1+WgHandshakeInitSize {
-		offset := cfg.S1
-		if n < offset+4 {
-			return nil, false
-		}
-		msgType := binary.LittleEndian.Uint32(buf[offset : offset+4])
-		if msgType == cfg.H1 {
-			binary.LittleEndian.PutUint32(buf[offset:offset+4], wgHandshakeInit)
-			return buf[offset:n], true
-		}
-	}
+	maxScan := max(cfg.S1, cfg.S2, cfg.S3, cfg.S4)
 
-	// Check for handshake init without padding (S1=0).
-	if cfg.S1 == 0 && n == WgHandshakeInitSize {
-		msgType := binary.LittleEndian.Uint32(buf[:4])
-		if msgType == cfg.H1 {
-			binary.LittleEndian.PutUint32(buf[:4], wgHandshakeInit)
-			return buf[:n], true
-		}
-	}
+	for off := 0; off <= maxScan && off+4 <= n; off++ {
+		h := binary.LittleEndian.Uint32(buf[off : off+4])
+		rem := n - off
 
-	// Check for handshake response with S2 padding: total size = S2 + 92.
-	if cfg.S2 > 0 && n == cfg.S2+WgHandshakeResponseSize {
-		offset := cfg.S2
-		if n < offset+4 {
-			return nil, false
+		if cfg.H1.Contains(h) && rem == WgHandshakeInitSize {
+			binary.LittleEndian.PutUint32(buf[off:off+4], wgHandshakeInit)
+			return buf[off:n], true
 		}
-		msgType := binary.LittleEndian.Uint32(buf[offset : offset+4])
-		if msgType == cfg.H2 {
-			binary.LittleEndian.PutUint32(buf[offset:offset+4], wgHandshakeResponse)
+		if cfg.H2.Contains(h) && rem == WgHandshakeResponseSize {
+			binary.LittleEndian.PutUint32(buf[off:off+4], wgHandshakeResponse)
 			if cfg.ClientPub != ([32]byte{}) {
-				recomputeMAC1Response(buf[offset:offset+WgHandshakeResponseSize], cfg.mac1keyClient)
+				recomputeMAC1Response(buf[off:off+WgHandshakeResponseSize], cfg.mac1keyClient)
 			}
-			return buf[offset:n], true
+			return buf[off:n], true
+		}
+		if cfg.H3.Contains(h) && rem == WgCookieReplySize {
+			binary.LittleEndian.PutUint32(buf[off:off+4], wgCookieReply)
+			return buf[off:n], true
+		}
+		if cfg.H4.Contains(h) && rem >= WgTransportMinSize {
+			binary.LittleEndian.PutUint32(buf[off:off+4], wgTransportData)
+			return buf[off:n], true
 		}
 	}
 
-	// Check for handshake response without padding (S2=0).
-	if cfg.S2 == 0 && n == WgHandshakeResponseSize {
-		msgType := binary.LittleEndian.Uint32(buf[:4])
-		if msgType == cfg.H2 {
-			binary.LittleEndian.PutUint32(buf[:4], wgHandshakeResponse)
-			if cfg.ClientPub != ([32]byte{}) {
-				recomputeMAC1Response(buf[:WgHandshakeResponseSize], cfg.mac1keyClient)
-			}
-			return buf[:n], true
-		}
-	}
-
-	// Cookie reply: no padding, fixed size.
-	if n == WgCookieReplySize {
-		msgType := binary.LittleEndian.Uint32(buf[:4])
-		if msgType == cfg.H3 {
-			binary.LittleEndian.PutUint32(buf[:4], wgCookieReply)
-			return buf[:n], true
-		}
-	}
-
-	// Transport data: no padding, variable size >= 32.
-	if n >= WgTransportMinSize {
-		msgType := binary.LittleEndian.Uint32(buf[:4])
-		if msgType == cfg.H4 {
-			binary.LittleEndian.PutUint32(buf[:4], wgTransportData)
-			return buf[:n], true
-		}
-	}
-
-	// Unknown or junk packet.
 	return nil, false
 }
 

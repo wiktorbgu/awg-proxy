@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/amneziawg-mikrotik/awg-proxy/internal/awg"
@@ -19,7 +20,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	awg.LogInfo(cfg, "starting awg-proxy")
+	mode := "v1"
+	if cfg.S3 > 0 || cfg.S4 > 0 ||
+		cfg.H1.Min != cfg.H1.Max || cfg.H2.Min != cfg.H2.Max ||
+		cfg.H3.Min != cfg.H3.Max || cfg.H4.Min != cfg.H4.Max ||
+		cfg.CPS[0] != nil || cfg.CPS[1] != nil || cfg.CPS[2] != nil ||
+		cfg.CPS[3] != nil || cfg.CPS[4] != nil {
+		mode = "v2"
+	}
+
+	awg.LogInfo(cfg, "starting awg-proxy mode=", mode)
 	awg.LogInfo(cfg, "listen=", listenAddr.String(), " remote=", remoteAddr.String())
 
 	proxy := awg.NewProxy(cfg, listenAddr, remoteAddr)
@@ -87,10 +97,10 @@ func parseEnv() (*awg.Config, *net.UDPAddr, *net.UDPAddr, error) {
 	cfg.Jmax = collectInt("AWG_JMAX", jmaxStr, &errs)
 	cfg.S1 = collectInt("AWG_S1", s1Str, &errs)
 	cfg.S2 = collectInt("AWG_S2", s2Str, &errs)
-	cfg.H1 = collectUint32("AWG_H1", h1Str, &errs)
-	cfg.H2 = collectUint32("AWG_H2", h2Str, &errs)
-	cfg.H3 = collectUint32("AWG_H3", h3Str, &errs)
-	cfg.H4 = collectUint32("AWG_H4", h4Str, &errs)
+	cfg.H1 = collectHRange("AWG_H1", h1Str, &errs)
+	cfg.H2 = collectHRange("AWG_H2", h2Str, &errs)
+	cfg.H3 = collectHRange("AWG_H3", h3Str, &errs)
+	cfg.H4 = collectHRange("AWG_H4", h4Str, &errs)
 
 	if b, err := base64.StdEncoding.DecodeString(serverPubB64); err != nil {
 		errs = append(errs, "AWG_SERVER_PUB: invalid base64: "+err.Error())
@@ -106,6 +116,24 @@ func parseEnv() (*awg.Config, *net.UDPAddr, *net.UDPAddr, error) {
 		errs = append(errs, "AWG_CLIENT_PUB: must be 32 bytes, got "+strconv.Itoa(len(b)))
 	} else {
 		copy(cfg.ClientPub[:], b)
+	}
+
+	// Optional v2 parameters.
+	if v := os.Getenv("AWG_S3"); v != "" {
+		cfg.S3 = collectInt("AWG_S3", v, &errs)
+	}
+	if v := os.Getenv("AWG_S4"); v != "" {
+		cfg.S4 = collectInt("AWG_S4", v, &errs)
+	}
+	for idx, name := range [5]string{"AWG_I1", "AWG_I2", "AWG_I3", "AWG_I4", "AWG_I5"} {
+		if v := os.Getenv(name); v != "" {
+			tmpl, err := awg.ParseCPSTemplate(v)
+			if err != nil {
+				errs = append(errs, name+": "+err.Error())
+			} else {
+				cfg.CPS[idx] = tmpl
+			}
+		}
 	}
 
 	if len(errs) > 0 {
@@ -167,6 +195,19 @@ func collectUint32(name, s string, errs *[]string) uint32 {
 		*errs = append(*errs, name+": expected uint32: "+err.Error())
 	}
 	return uint32(n)
+}
+
+func collectHRange(name, s string, errs *[]string) awg.HRange {
+	before, after, found := strings.Cut(s, "-")
+	lo := collectUint32(name, before, errs)
+	if !found {
+		return awg.HRange{Min: lo, Max: lo}
+	}
+	hi := collectUint32(name+" max", after, errs)
+	if lo > hi {
+		*errs = append(*errs, name+": min > max")
+	}
+	return awg.HRange{Min: lo, Max: hi}
 }
 
 func buildErrorMsg(errs []string) string {

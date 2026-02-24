@@ -351,7 +351,7 @@
     // Field definitions
     // ============================================================
     var IFACE_REQUIRED = ['PrivateKey', 'Address', 'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4'];
-    var IFACE_OPTIONAL = ['DNS'];
+    var IFACE_OPTIONAL = ['DNS', 'S3', 'S4', 'I1', 'I2', 'I3', 'I4', 'I5'];
     var PEER_REQUIRED = ['PublicKey', 'Endpoint', 'AllowedIPs'];
     var PEER_OPTIONAL = ['PresharedKey', 'PersistentKeepalive'];
 
@@ -359,7 +359,11 @@
     // Render parsed fields as tags
     // ============================================================
     function renderFields(parsed) {
-        var html = '<div style="margin-bottom:8px;font-size:0.8rem;color:var(--text-muted)">[Interface] section</div>';
+        var proto = detectProtocol(parsed.interface);
+        var protoBadge = proto === 'v2'
+            ? '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#dbeafe;color:#1e40af;margin-left:8px">AWG v2</span>'
+            : '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#374151;margin-left:8px">AWG v1</span>';
+        var html = '<div style="margin-bottom:8px;font-size:0.8rem;color:var(--text-muted)">[Interface] section' + protoBadge + '</div>';
         html += '<div class="fields-grid">';
         IFACE_REQUIRED.concat(IFACE_OPTIONAL).forEach(function (k) {
             var v = parsed.interface[k];
@@ -403,6 +407,13 @@
         if (!isNonNegativeInt(s)) return false;
         var n = Number(s);
         return n >= 0 && n <= 4294967295;
+    }
+
+    function isHValue(s) {
+        if (isUint32(s)) return true;
+        var parts = s.split('-');
+        return parts.length === 2 && isUint32(parts[0]) && isUint32(parts[1])
+               && Number(parts[0]) <= Number(parts[1]);
     }
 
     function isValidIPCIDR(s) {
@@ -461,6 +472,15 @@
         return /^[1-9]\d*$/.test(s);
     }
 
+    function detectProtocol(iface) {
+        if (iface.S3 || iface.S4 || iface.I1 ||
+            (iface.H1 && iface.H1.indexOf('-') >= 0) ||
+            (iface.H2 && iface.H2.indexOf('-') >= 0) ||
+            (iface.H3 && iface.H3.indexOf('-') >= 0) ||
+            (iface.H4 && iface.H4.indexOf('-') >= 0)) return 'v2';
+        return 'v1';
+    }
+
     // ============================================================
     // Validate
     // ============================================================
@@ -499,15 +519,19 @@
             errors.push('[Interface] S1 -- must be a non-negative integer');
         if (!isNonNegativeInt(iface.S2))
             errors.push('[Interface] S2 -- must be a non-negative integer');
+        if (iface.S3 && !isNonNegativeInt(iface.S3))
+            errors.push('[Interface] S3 -- must be a non-negative integer');
+        if (iface.S4 && !isNonNegativeInt(iface.S4))
+            errors.push('[Interface] S4 -- must be a non-negative integer');
 
-        if (!isUint32(iface.H1))
-            errors.push('[Interface] H1 -- must be an integer 0..4294967295');
-        if (!isUint32(iface.H2))
-            errors.push('[Interface] H2 -- must be an integer 0..4294967295');
-        if (!isUint32(iface.H3))
-            errors.push('[Interface] H3 -- must be an integer 0..4294967295');
-        if (!isUint32(iface.H4))
-            errors.push('[Interface] H4 -- must be an integer 0..4294967295');
+        if (!isHValue(iface.H1))
+            errors.push('[Interface] H1 -- must be uint32 or range MIN-MAX');
+        if (!isHValue(iface.H2))
+            errors.push('[Interface] H2 -- must be uint32 or range MIN-MAX');
+        if (!isHValue(iface.H3))
+            errors.push('[Interface] H3 -- must be uint32 or range MIN-MAX');
+        if (!isHValue(iface.H4))
+            errors.push('[Interface] H4 -- must be uint32 or range MIN-MAX');
 
         if (!isValidBase64Key(peer.PublicKey))
             errors.push('[Peer] PublicKey -- invalid base64 key (expected 44 chars, 32 bytes)');
@@ -614,7 +638,7 @@
             '/ip/firewall/nat/add chain=srcnat action=masquerade src-address=172.18.0.0/30',
             '',
             '# 3. WireGuard interface (MikroTik derives the public key automatically)',
-            '/interface/wireguard/add name=wg-awg-proxy private-key="' + i.PrivateKey + '" listen-port=12429',
+            '/interface/wireguard/add name=wg-awg-proxy private-key="' + i.PrivateKey + '" listen-port=12429 disabled=yes',
             peerAdd,
             '/ip/address/add address=' + i.Address + ' interface=wg-awg-proxy',
             '/ip/firewall/nat/add chain=srcnat action=masquerade out-interface=wg-awg-proxy',
@@ -634,6 +658,12 @@
             '/container/envs/add list=awg-proxy-env key=AWG_SERVER_PUB value="' + p.PublicKey + '"',
             '/container/envs/add list=awg-proxy-env key=AWG_CLIENT_PUB value=[/interface/wireguard/get [find name=wg-awg-proxy] public-key]',
         ]);
+
+        if (i.S3) lines.push('/container/envs/add list=awg-proxy-env key=AWG_S3 value="' + i.S3 + '"');
+        if (i.S4) lines.push('/container/envs/add list=awg-proxy-env key=AWG_S4 value="' + i.S4 + '"');
+        ['I1','I2','I3','I4','I5'].forEach(function(k) {
+            if (i[k]) lines.push('/container/envs/add list=awg-proxy-env key=AWG_' + k + ' value="' + i[k] + '"');
+        });
 
         if (hasDNS) {
             var dnsStr = dnsServers.join(',');
@@ -678,13 +708,16 @@
             '  }',
             '  /container/start [find where interface=veth-awg-proxy]',
             '  :do { /file/remove [find where name="console-dump.txt"] } on-error={}',
+            '  :put "Waiting for container to start..."',
+            '  :delay 5s',
+            '  /interface/wireguard/enable wg-awg-proxy',
+            '  :put "WireGuard interface enabled"',
             '  :put "Installation complete!"',
         ]);
 
         if (hasDNS) {
             var firstDNS = dnsServers[0];
             lines = lines.concat([
-                '  :delay 2s',
                 '  :put "Ping test: ' + firstDNS + ' via AmneziaWG tunnel. repeat 10 times"',
                 '  /ping ' + firstDNS + ' count=10 interval=1',
             ]);

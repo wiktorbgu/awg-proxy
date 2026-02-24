@@ -2,7 +2,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 IMAGE_NAME = awg-proxy
 BUILD_DIR = builds
 
-.PHONY: build test clean docker-arm64 docker-arm docker-amd64 docker-all
+.PHONY: build test clean docker-arm64 docker-arm docker-amd64 docker-all \
+	docker-arm64-7.20-longterm docker-arm-7.20-longterm docker-amd64-7.20-longterm docker-all-7.20-longterm
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -36,3 +37,20 @@ docker-amd64:
 	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-amd64.tar
 
 docker-all: docker-arm64 docker-arm docker-amd64
+
+docker-arm64-7.20-longterm:
+	@mkdir -p $(BUILD_DIR)
+	scripts/mkdockertar.sh linux arm64 "" $(IMAGE_NAME):$(VERSION)-arm64 $(BUILD_DIR)/$(IMAGE_NAME)-arm64-7.20-longterm.tar
+	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-arm64-7.20-longterm.tar
+
+docker-arm-7.20-longterm:
+	@mkdir -p $(BUILD_DIR)
+	scripts/mkdockertar.sh linux arm 7 $(IMAGE_NAME):$(VERSION)-arm $(BUILD_DIR)/$(IMAGE_NAME)-arm-7.20-longterm.tar
+	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-arm-7.20-longterm.tar
+
+docker-amd64-7.20-longterm:
+	@mkdir -p $(BUILD_DIR)
+	scripts/mkdockertar.sh linux amd64 "" $(IMAGE_NAME):$(VERSION)-amd64 $(BUILD_DIR)/$(IMAGE_NAME)-amd64-7.20-longterm.tar
+	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-amd64-7.20-longterm.tar
+
+docker-all-7.20-longterm: docker-arm64-7.20-longterm docker-arm-7.20-longterm docker-amd64-7.20-longterm

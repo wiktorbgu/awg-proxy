@@ -29,6 +29,9 @@ Done. The configurator works offline; no data is sent to any server.
 - An AmneziaWG server with known obfuscation parameters
 - Configuration file `.conf` exported from AmneziaVPN
 - MikroTik RouterOS 7.4+ with the **container** package
+  - **RouterOS 7.21+**: standard images `awg-proxy-{arch}.tar.gz` (OCI format)
+  - **RouterOS 7.20 and below**: images `awg-proxy-{arch}-7.20-longterm.tar.gz` (Docker format)
+  - The configurator detects the version automatically
 - Architecture: ARM64, ARM (v7), or x86_64 ([check your device](https://help.mikrotik.com/docs/spaces/ROS/pages/47579139/Container))
 - At least 5 MB disk space, 16+ MB RAM recommended
 
@@ -46,7 +49,7 @@ The router will ask for confirmation (button press or reboot, depending on the m
 
 ### 2. Upload Image
 
-Download `awg-proxy-{arch}.tar.gz` from [Releases](https://github.com/amneziawg-mikrotik/awg-proxy/releases/latest) and upload it to the router via Winbox or SCP.
+Download `awg-proxy-{arch}.tar.gz` from [Releases](https://github.com/amneziawg-mikrotik/awg-proxy/releases/latest) and upload it to the router via Winbox or SCP. For RouterOS 7.20 and below, use files with the `-7.20-longterm` suffix (Docker format).
 
 Or download directly on the router (replace URL with the actual one):
 

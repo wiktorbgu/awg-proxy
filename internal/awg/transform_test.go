@@ -700,6 +700,124 @@ func BenchmarkTransformInboundTransport(b *testing.B) {
 	}
 }
 
+func TestInboundV2RangeFalsePositive(t *testing.T) {
+	// Regression test: wide H4 range must NOT cause handshake packets
+	// to be misidentified as transport data due to random padding bytes
+	// falling into the H4 range at offset 0.
+	cfg := &Config{
+		Jc:   2,
+		Jmin: 10,
+		Jmax: 50,
+		S1:   46,
+		S2:   62,
+		S3:   30,
+		S4:   17,
+		H1:   HRange{Min: 100000, Max: 200000},
+		H2:   HRange{Min: 300000, Max: 400000},
+		H3:   HRange{Min: 500000, Max: 600000},
+		// Wide H4 range: covers ~25% of uint32 space.
+		H4: HRange{Min: 0, Max: 1073741823},
+	}
+	cfg.ComputeFastPath()
+
+	// Helper: poison first 4 bytes of padding with a value inside H4 range.
+	poisonPadding := func(buf []byte) {
+		binary.LittleEndian.PutUint32(buf[:4], cfg.H4.Min+12345)
+	}
+
+	// 1. Padded handshake response: S2+92 bytes, padding poisoned with H4 value.
+	t.Run("handshake_response", func(t *testing.T) {
+		inner := makePacket(cfg.H2.Min, WgHandshakeResponseSize)
+		buf := make([]byte, cfg.S2+WgHandshakeResponseSize)
+		poisonPadding(buf)
+		copy(buf[cfg.S2:], inner)
+
+		out, valid := TransformInbound(buf, len(buf), cfg)
+		if !valid {
+			t.Fatal("expected valid=true for handshake response")
+		}
+		if len(out) != WgHandshakeResponseSize {
+			t.Fatalf("expected len %d, got %d", WgHandshakeResponseSize, len(out))
+		}
+		gotType := binary.LittleEndian.Uint32(out[:4])
+		if gotType != wgHandshakeResponse {
+			t.Fatalf("expected type %d (handshake response), got %d", wgHandshakeResponse, gotType)
+		}
+	})
+
+	// 2. Padded handshake init: S1+148 bytes, padding poisoned.
+	t.Run("handshake_init", func(t *testing.T) {
+		inner := makePacket(cfg.H1.Min, WgHandshakeInitSize)
+		buf := make([]byte, cfg.S1+WgHandshakeInitSize)
+		poisonPadding(buf)
+		copy(buf[cfg.S1:], inner)
+
+		out, valid := TransformInbound(buf, len(buf), cfg)
+		if !valid {
+			t.Fatal("expected valid=true for handshake init")
+		}
+		if len(out) != WgHandshakeInitSize {
+			t.Fatalf("expected len %d, got %d", WgHandshakeInitSize, len(out))
+		}
+		gotType := binary.LittleEndian.Uint32(out[:4])
+		if gotType != wgHandshakeInit {
+			t.Fatalf("expected type %d (handshake init), got %d", wgHandshakeInit, gotType)
+		}
+	})
+
+	// 3. Padded cookie reply: S3+64 bytes, padding poisoned.
+	t.Run("cookie_reply", func(t *testing.T) {
+		inner := makePacket(cfg.H3.Min, WgCookieReplySize)
+		buf := make([]byte, cfg.S3+WgCookieReplySize)
+		poisonPadding(buf)
+		copy(buf[cfg.S3:], inner)
+
+		out, valid := TransformInbound(buf, len(buf), cfg)
+		if !valid {
+			t.Fatal("expected valid=true for cookie reply")
+		}
+		if len(out) != WgCookieReplySize {
+			t.Fatalf("expected len %d, got %d", WgCookieReplySize, len(out))
+		}
+		gotType := binary.LittleEndian.Uint32(out[:4])
+		if gotType != wgCookieReply {
+			t.Fatalf("expected type %d (cookie reply), got %d", wgCookieReply, gotType)
+		}
+	})
+
+	// 4. Padded transport data: S4+payload bytes, H4 type at offset S4.
+	t.Run("transport_data", func(t *testing.T) {
+		payloadSize := 200
+		inner := makePacket(cfg.H4.Min+999, payloadSize)
+		buf := make([]byte, cfg.S4+payloadSize)
+		randFill(buf[:cfg.S4])
+		copy(buf[cfg.S4:], inner)
+
+		out, valid := TransformInbound(buf, len(buf), cfg)
+		if !valid {
+			t.Fatal("expected valid=true for transport data")
+		}
+		if len(out) != payloadSize {
+			t.Fatalf("expected len %d, got %d", payloadSize, len(out))
+		}
+		gotType := binary.LittleEndian.Uint32(out[:4])
+		if gotType != wgTransportData {
+			t.Fatalf("expected type %d (transport data), got %d", wgTransportData, gotType)
+		}
+	})
+
+	// 5. Junk packet: size doesn't match any handshake total or transport minimum.
+	t.Run("junk_packet", func(t *testing.T) {
+		junkSize := 17
+		buf := make([]byte, junkSize)
+		randFill(buf)
+		_, valid := TransformInbound(buf, len(buf), cfg)
+		if valid {
+			t.Fatal("expected valid=false for junk packet")
+		}
+	})
+}
+
 func BenchmarkGenerateJunkPackets(b *testing.B) {
 	cfg := testConfig()
 	b.ResetTimer()

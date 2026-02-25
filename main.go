@@ -37,6 +37,12 @@ func main() {
 		mode = "v1.5"
 	}
 
+	if v := os.Getenv("AWG_SOCKET_BUF"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			awg.SocketBufSize = n
+		}
+	}
+
 	maxProcs := 2
 	if v := os.Getenv("AWG_GOMAXPROCS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -48,6 +54,12 @@ func main() {
 	awg.LogInfo(cfg, "awg-proxy ", version, " ", runtime.GOOS, "/", runtime.GOARCH, " mode=", mode)
 	awg.LogInfo(cfg, "listen=", listenAddr.String(), " remote=", remoteAddr.String())
 	awg.LogInfo(cfg, "GOMAXPROCS=", strconv.Itoa(maxProcs))
+	awg.LogInfo(cfg, "config: S1=", strconv.Itoa(cfg.S1), " S2=", strconv.Itoa(cfg.S2),
+		" S3=", strconv.Itoa(cfg.S3), " S4=", strconv.Itoa(cfg.S4))
+	awg.LogInfo(cfg, "config: H1=", os.Getenv("AWG_H1"), " H2=", os.Getenv("AWG_H2"),
+		" H3=", os.Getenv("AWG_H3"), " H4=", os.Getenv("AWG_H4"))
+	awg.LogInfo(cfg, "config: initTotal=", strconv.Itoa(cfg.S1+148),
+		" respTotal=", strconv.Itoa(cfg.S2+92), " cookieTotal=", strconv.Itoa(cfg.S3+64))
 
 	proxy := awg.NewProxy(cfg, listenAddr, remoteAddr)
 

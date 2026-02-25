@@ -76,9 +76,11 @@ type Config struct {
 	mac1keyServer [32]byte // precomputed BLAKE2s-256("mac1----" || ServerPub)
 	mac1keyClient [32]byte // precomputed BLAKE2s-256("mac1----" || ClientPub)
 
-	h4Fixed uint32 // H4.Min for point-range configs (avoids Pick())
-	h4NoOp  bool   // true when H4={4,4} and S4==0 (identity transform, zero work)
-	maxScan int    // precomputed max(S1,S2,S3,S4) for inbound scanning
+	h4Fixed     uint32 // H4.Min for point-range configs (avoids Pick())
+	h4NoOp      bool   // true when H4={4,4} and S4==0 (identity transform, zero work)
+	initTotal   int    // S1 + WgHandshakeInitSize (expected total size of padded init)
+	respTotal   int    // S2 + WgHandshakeResponseSize (expected total size of padded response)
+	cookieTotal int    // S3 + WgCookieReplySize (expected total size of padded cookie)
 
 	Timeout  int // inactivity timeout seconds, default 180
 	LogLevel int // 0=none, 1=error, 2=info
@@ -103,7 +105,9 @@ func (c *Config) ComputeMAC1Keys() {
 func (c *Config) ComputeFastPath() {
 	c.h4Fixed = c.H4.Min
 	c.h4NoOp = c.H4.Min == wgTransportData && c.H4.Max == wgTransportData && c.S4 == 0
-	c.maxScan = max(c.S1, c.S2, c.S3, c.S4)
+	c.initTotal = c.S1 + WgHandshakeInitSize
+	c.respTotal = c.S2 + WgHandshakeResponseSize
+	c.cookieTotal = c.S3 + WgCookieReplySize
 }
 
 // TransformOutbound transforms an outbound WireGuard packet into AmneziaWG format.
@@ -187,44 +191,57 @@ func TransformOutbound(buf []byte, dataOff, n int, cfg *Config) (out []byte, sen
 
 // TransformInbound transforms an inbound AmneziaWG packet back to standard WireGuard format.
 // Returns the transformed packet and whether it is valid (junk packets return valid=false).
-// Uses scanning to find the header at offsets [0, maxScan] to handle S1-S4 padding.
+// Uses size-based dispatch: handshake packets have fixed total sizes and are checked first,
+// transport data is checked last to avoid false positives from random padding bytes.
 func TransformInbound(buf []byte, n int, cfg *Config) (out []byte, valid bool) {
 	if n < 4 {
 		return nil, false
 	}
 
-	// Fast path: transport data at offset 0 (no S4 padding, ~99.9% of traffic).
-	h := binary.LittleEndian.Uint32(buf[:4])
-	if cfg.H4.Contains(h) && n >= WgTransportMinSize {
-		if !cfg.h4NoOp {
-			binary.LittleEndian.PutUint32(buf[:4], wgTransportData)
+	// Fast path: identity transform (H4={4,4}, S4=0) — no work needed.
+	if cfg.h4NoOp {
+		if binary.LittleEndian.Uint32(buf[:4]) == wgTransportData && n >= WgTransportMinSize {
+			return buf[:n], true
 		}
-		return buf[:n], true
 	}
 
-	// Slow path: scan offsets, check H4 first (most frequent), then H1/H2/H3.
-	for off := 0; off <= cfg.maxScan && off+4 <= n; off++ {
-		h := binary.LittleEndian.Uint32(buf[off : off+4])
-		rem := n - off
+	// Size-based dispatch: handshake packets have fixed total sizes (S+payload).
+	// Check handshake types FIRST, transport data LAST to avoid priority inversion
+	// where random padding bytes fall into a wide H4 range.
 
-		if cfg.H4.Contains(h) && rem >= WgTransportMinSize {
-			binary.LittleEndian.PutUint32(buf[off:off+4], wgTransportData)
-			return buf[off:n], true
+	if n == cfg.initTotal {
+		h := binary.LittleEndian.Uint32(buf[cfg.S1 : cfg.S1+4])
+		if cfg.H1.Contains(h) {
+			binary.LittleEndian.PutUint32(buf[cfg.S1:cfg.S1+4], wgHandshakeInit)
+			return buf[cfg.S1:n], true
 		}
-		if cfg.H1.Contains(h) && rem == WgHandshakeInitSize {
-			binary.LittleEndian.PutUint32(buf[off:off+4], wgHandshakeInit)
-			return buf[off:n], true
-		}
-		if cfg.H2.Contains(h) && rem == WgHandshakeResponseSize {
-			binary.LittleEndian.PutUint32(buf[off:off+4], wgHandshakeResponse)
+	}
+
+	if n == cfg.respTotal {
+		h := binary.LittleEndian.Uint32(buf[cfg.S2 : cfg.S2+4])
+		if cfg.H2.Contains(h) {
+			binary.LittleEndian.PutUint32(buf[cfg.S2:cfg.S2+4], wgHandshakeResponse)
 			if cfg.ClientPub != ([32]byte{}) {
-				recomputeMAC1Response(buf[off:off+WgHandshakeResponseSize], cfg.mac1keyClient)
+				recomputeMAC1Response(buf[cfg.S2:cfg.S2+WgHandshakeResponseSize], cfg.mac1keyClient)
 			}
-			return buf[off:n], true
+			return buf[cfg.S2:n], true
 		}
-		if cfg.H3.Contains(h) && rem == WgCookieReplySize {
-			binary.LittleEndian.PutUint32(buf[off:off+4], wgCookieReply)
-			return buf[off:n], true
+	}
+
+	if n == cfg.cookieTotal {
+		h := binary.LittleEndian.Uint32(buf[cfg.S3 : cfg.S3+4])
+		if cfg.H3.Contains(h) {
+			binary.LittleEndian.PutUint32(buf[cfg.S3:cfg.S3+4], wgCookieReply)
+			return buf[cfg.S3:n], true
+		}
+	}
+
+	// Transport data: variable size, checked last to avoid priority inversion.
+	if n >= cfg.S4+WgTransportMinSize {
+		h := binary.LittleEndian.Uint32(buf[cfg.S4 : cfg.S4+4])
+		if cfg.H4.Contains(h) {
+			binary.LittleEndian.PutUint32(buf[cfg.S4:cfg.S4+4], wgTransportData)
+			return buf[cfg.S4:n], true
 		}
 	}
 

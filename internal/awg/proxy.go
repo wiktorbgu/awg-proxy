@@ -2,16 +2,24 @@ package awg
 
 import (
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
 const bufSize = 1500 // standard MTU
+
+const defaultSocketBuf = 16 * 1024 * 1024 // 16 MB request; kernel clamps to rmem_max
+
+// SocketBufSize is the requested socket buffer size (configurable via AWG_SOCKET_BUF).
+var SocketBufSize = defaultSocketBuf
 
 // Proxy is a UDP proxy that transforms WireGuard packets to AmneziaWG format.
 type Proxy struct {
@@ -23,15 +31,49 @@ type Proxy struct {
 	stopped    atomic.Bool
 	lastActive atomic.Bool // activity flag; set on recv, cleared by timeout checker
 	cpsCounter uint32      // counter for CPS <c> tags
+	junkBuf    []byte      // pre-allocated: Jc * Jmax bytes for junk generation
+	junkPkts   [][]byte    // pre-allocated: Jc slice headers for junk packets
 }
 
 // NewProxy creates a new Proxy instance.
 func NewProxy(cfg *Config, listenAddr, remoteAddr *net.UDPAddr) *Proxy {
-	return &Proxy{
+	p := &Proxy{
 		cfg:        cfg,
 		listenAddr: listenAddr,
 		remoteAddr: remoteAddr,
 	}
+	if cfg.Jc > 0 && cfg.Jmax > 0 {
+		p.junkBuf = make([]byte, cfg.Jc*cfg.Jmax)
+		p.junkPkts = make([][]byte, cfg.Jc)
+	}
+	return p
+}
+
+// generateJunk fills pre-allocated junk buffers with random data and returns
+// slices of random sizes in [Jmin, Jmax]. Zero allocations per call.
+func (p *Proxy) generateJunk() [][]byte {
+	if p.cfg.Jc <= 0 || p.cfg.Jmax <= 0 {
+		return nil
+	}
+	jmin := p.cfg.Jmin
+	if jmin <= 0 {
+		jmin = 1
+	}
+	jmax := p.cfg.Jmax
+	if jmax < jmin {
+		jmax = jmin
+	}
+	randFill(p.junkBuf)
+	off := 0
+	for i := 0; i < p.cfg.Jc; i++ {
+		size := jmin
+		if jmax > jmin {
+			size = jmin + rand.IntN(jmax-jmin+1)
+		}
+		p.junkPkts[i] = p.junkBuf[off : off+size]
+		off += size
+	}
+	return p.junkPkts[:p.cfg.Jc]
 }
 
 func setSocketBuffers(conn *net.UDPConn, size int) {
@@ -39,21 +81,30 @@ func setSocketBuffers(conn *net.UDPConn, size int) {
 	conn.SetWriteBuffer(size)
 }
 
+func setSocketBuffersLog(conn *net.UDPConn, size int, cfg *Config, label string) {
+	conn.SetReadBuffer(size)
+	conn.SetWriteBuffer(size)
+	if cfg.LogLevel >= LevelDebug {
+		actualR, actualW := getSocketBufSizes(conn)
+		LogDebug(cfg, label, " socket buf: requested=", strconv.Itoa(size/1024), "KB, actual read=", strconv.Itoa(actualR/1024), "KB write=", strconv.Itoa(actualW/1024), "KB")
+	}
+}
+
 // Run starts the proxy and blocks until stop is called or a fatal error occurs.
 // The stop channel is closed to signal shutdown.
 func (p *Proxy) Run(stop <-chan struct{}) error {
-	listenConn, err := net.ListenUDP("udp", p.listenAddr)
+	listenConn, err := net.ListenUDP("udp4", p.listenAddr)
 	if err != nil {
 		return err
 	}
 	defer listenConn.Close()
-	setSocketBuffers(listenConn, 2*1024*1024)
+	setSocketBuffersLog(listenConn, SocketBufSize, p.cfg, "listen")
 
-	remoteConn, err := net.DialUDP("udp", nil, p.remoteAddr)
+	remoteConn, err := net.DialUDP("udp4", nil, p.remoteAddr)
 	if err != nil {
 		return err
 	}
-	setSocketBuffers(remoteConn, 2*1024*1024)
+	setSocketBuffersLog(remoteConn, SocketBufSize, p.cfg, "remote")
 
 	p.remoteConn.Store(remoteConn)
 	p.lastActive.Store(true)
@@ -108,14 +159,29 @@ func (p *Proxy) Run(stop <-chan struct{}) error {
 		}
 	}()
 
+	useBatch := batchAvailable()
+	if useBatch {
+		LogDebug(p.cfg, "batch I/O: enabled (recvmmsg/sendmmsg)")
+	} else {
+		LogDebug(p.cfg, "batch I/O: unavailable, using single-packet mode")
+	}
+
 	go func() {
 		defer wg.Done()
-		p.clientToServer(listenConn)
+		if useBatch {
+			p.clientToServerBatch(listenConn)
+		} else {
+			p.clientToServer(listenConn)
+		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		p.serverToClient(listenConn, remoteConn, stop)
+		if useBatch {
+			p.serverToClientBatch(listenConn, remoteConn, stop)
+		} else {
+			p.serverToClient(listenConn, remoteConn, stop)
+		}
 	}()
 
 	wg.Wait()
@@ -126,6 +192,7 @@ func (p *Proxy) Run(stop <-chan struct{}) error {
 }
 
 func (p *Proxy) clientToServer(listenConn *net.UDPConn) {
+	runtime.LockOSThread()
 	prefix := p.cfg.S4
 	buf := make([]byte, prefix+bufSize)
 
@@ -154,6 +221,7 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn) {
 		}
 
 		if sendJunk {
+			LogDebug(p.cfg, "c->s: handshake init ", strconv.Itoa(n), "B -> ", strconv.Itoa(len(out)), "B")
 			// CPS packets (I1->I2->I3->I4->I5).
 			cpsPackets := GenerateCPSPackets(p.cfg.CPS, &p.cpsCounter)
 			for ci, pkt := range cpsPackets {
@@ -167,8 +235,8 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn) {
 					LogDebug(p.cfg, "c->s: cps ", strconv.Itoa(ci+1), "/", strconv.Itoa(len(cpsPackets)), " ", strconv.Itoa(len(pkt)), "B sent")
 				}
 			}
-			// Junk packets.
-			junkPackets := GenerateJunkPackets(p.cfg)
+			// Junk packets (zero-alloc, pre-allocated buffers).
+			junkPackets := p.generateJunk()
 			for i, junk := range junkPackets {
 				if _, err := currentRemote.Write(junk); err != nil {
 					if p.cfg.LogLevel >= LevelDebug {
@@ -195,9 +263,11 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn) {
 }
 
 func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn, stop <-chan struct{}) {
+	runtime.LockOSThread()
 	buf := make([]byte, bufSize)
 	currentRemote := remoteConn
 	backoff := time.Second
+	var pktCount uint8 = 255
 
 	for {
 		n, err := currentRemote.Read(buf)
@@ -213,9 +283,10 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 			currentRemote.Close()
 			currentRemote = newConn
 			p.remoteConn.Store(newConn)
-			setSocketBuffers(newConn, 2*1024*1024)
+			setSocketBuffers(newConn, SocketBufSize)
 			p.lastActive.Store(true)
 			p.clientAddr.Store(nil)
+			pktCount = 255
 			if p.stopped.Load() {
 				newConn.Close()
 				return
@@ -223,7 +294,10 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 			continue
 		}
 
-		p.lastActive.Store(true)
+		pktCount++
+		if pktCount == 0 {
+			p.lastActive.Store(true)
+		}
 		backoff = time.Second // reset backoff on success
 
 		if p.cfg.LogLevel >= LevelDebug {
@@ -238,6 +312,8 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 			continue
 		}
 
+		hsIn := len(out) >= 4 && out[0] != byte(wgTransportData)
+
 		if p.cfg.LogLevel >= LevelDebug {
 			LogDebug(p.cfg, "s->c: transformed ", strconv.Itoa(len(out)), "B, valid=true")
 		}
@@ -247,9 +323,13 @@ func (p *Proxy) serverToClient(listenConn *net.UDPConn, remoteConn *net.UDPConn,
 			_, err = listenConn.WriteToUDPAddrPort(out, *clientAddr)
 			if err != nil {
 				LogError(p.cfg, "listen write: ", err.Error())
+			} else if hsIn && p.cfg.LogLevel >= LevelDebug {
+				LogDebug(p.cfg, "s->c: handshake ", strconv.Itoa(n), "B -> ", strconv.Itoa(len(out)), "B, forwarded to ", clientAddr.String())
 			} else if p.cfg.LogLevel >= LevelDebug {
 				LogDebug(p.cfg, "s->c: sent ", strconv.Itoa(len(out)), "B to ", clientAddr.String())
 			}
+		} else if hsIn {
+			LogInfo(p.cfg, "s->c: handshake ", strconv.Itoa(n), "B -> ", strconv.Itoa(len(out)), "B, no client addr!")
 		} else if p.cfg.LogLevel >= LevelDebug {
 			LogDebug(p.cfg, "s->c: no client addr, packet dropped")
 		}
@@ -270,11 +350,11 @@ func (p *Proxy) reconnectRemote(stop <-chan struct{}, backoff *time.Duration) *n
 		LogInfo(p.cfg, "reconnecting to ", p.remoteAddr.String())
 
 		// Re-resolve the address (handles DNS changes).
-		addr, err := net.ResolveUDPAddr("udp", p.remoteAddr.String())
+		addr, err := net.ResolveUDPAddr("udp4", p.remoteAddr.String())
 		if err != nil {
 			LogError(p.cfg, "resolve: ", err.Error())
 		} else {
-			conn, err := net.DialUDP("udp", nil, addr)
+			conn, err := net.DialUDP("udp4", nil, addr)
 			if err == nil {
 				LogInfo(p.cfg, "reconnected to ", addr.String())
 				p.lastActive.Store(true)
@@ -301,8 +381,13 @@ func (p *Proxy) reconnectRemote(stop <-chan struct{}, backoff *time.Duration) *n
 }
 
 func isClosedErr(err error) bool {
-	// net.ErrClosed is returned when reading from a closed connection.
-	return err == net.ErrClosed || isClosedErrString(err)
+	if err == net.ErrClosed {
+		return true
+	}
+	if errno, ok := err.(syscall.Errno); ok && errno == syscall.EBADF {
+		return true
+	}
+	return isClosedErrString(err)
 }
 
 func isClosedErrString(err error) bool {

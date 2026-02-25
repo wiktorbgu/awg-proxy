@@ -202,7 +202,7 @@ func (t *CPSTemplate) Generate(counter uint32) []byte {
 // GenerateCPSPackets generates all configured CPS packets (I1->I5 order).
 // counter is incremented for each packet sent.
 func GenerateCPSPackets(templates [5]*CPSTemplate, counter *uint32) [][]byte {
-	var packets [][]byte
+	packets := make([][]byte, 0, 5)
 	for _, tmpl := range templates {
 		if tmpl == nil {
 			continue

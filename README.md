@@ -43,6 +43,8 @@ MikroTik WG-клиент ──UDP──> [awg-proxy] ──UDP──> серв�
 
 Готово. Конфигуратор работает оффлайн, данные не отправляются на сервер.
 
+<video src="https://github.com/user-attachments/assets/a2e7a563-dc62-428f-8434-1eba06d830e9" controls width="100%"></video>
+
 ![Замеры скорости на MikroTik AX3](https://github.com/user-attachments/assets/9fb34444-681b-4f34-8306-8f202f1b121d)
 
 *Замеры скорости на устройстве MikroTik AX3*

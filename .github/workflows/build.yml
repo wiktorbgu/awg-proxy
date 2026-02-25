@@ -46,6 +46,7 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-arm64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-arm .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-armv5 .
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-amd64 .
 
       - name: Setup QEMU
@@ -60,6 +61,9 @@ jobs:
       - name: Build Docker image (arm/v7)
         run: docker buildx build --platform linux/arm/v7 --output type=oci,dest=awg-proxy-arm.tar -t awg-proxy:arm .
 
+      - name: Build Docker image (arm/v5)
+        run: docker buildx build --platform linux/arm/v5 --output type=oci,dest=awg-proxy-armv5.tar -t awg-proxy:armv5 .
+
       - name: Build Docker image (amd64)
         run: docker buildx build --platform linux/amd64 --output type=oci,dest=awg-proxy-amd64.tar -t awg-proxy:amd64 .
 
@@ -69,11 +73,14 @@ jobs:
       - name: Build Docker image for RouterOS 7.20 LT (arm/v7)
         run: scripts/mkdockertar.sh linux arm 7 awg-proxy:arm awg-proxy-arm-7.20-longterm.tar
 
+      - name: Build Docker image for RouterOS 7.20 LT (arm/v5)
+        run: scripts/mkdockertar.sh linux arm 5 awg-proxy:armv5 awg-proxy-armv5-7.20-longterm.tar
+
       - name: Build Docker image for RouterOS 7.20 LT (amd64)
         run: scripts/mkdockertar.sh linux amd64 "" awg-proxy:amd64 awg-proxy-amd64-7.20-longterm.tar
 
       - name: Gzip tar files
-        run: gzip awg-proxy-arm64.tar awg-proxy-arm.tar awg-proxy-amd64.tar awg-proxy-arm64-7.20-longterm.tar awg-proxy-arm-7.20-longterm.tar awg-proxy-amd64-7.20-longterm.tar
+        run: gzip awg-proxy-arm64.tar awg-proxy-arm.tar awg-proxy-armv5.tar awg-proxy-amd64.tar awg-proxy-arm64-7.20-longterm.tar awg-proxy-arm-7.20-longterm.tar awg-proxy-armv5-7.20-longterm.tar awg-proxy-amd64-7.20-longterm.tar
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -83,10 +90,13 @@ jobs:
           files: |
             awg-proxy-linux-arm64
             awg-proxy-linux-arm
+            awg-proxy-linux-armv5
             awg-proxy-linux-amd64
             awg-proxy-arm64.tar.gz
             awg-proxy-arm.tar.gz
+            awg-proxy-armv5.tar.gz
             awg-proxy-amd64.tar.gz
             awg-proxy-arm64-7.20-longterm.tar.gz
             awg-proxy-arm-7.20-longterm.tar.gz
+            awg-proxy-armv5-7.20-longterm.tar.gz
             awg-proxy-amd64-7.20-longterm.tar.gz

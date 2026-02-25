@@ -205,6 +205,7 @@ func (p *Proxy) clientToServer(listenConn *net.UDPConn) {
 			LogError(p.cfg, "listen read: ", err.Error())
 			continue
 		}
+		p.lastActive.Store(true)
 
 		// Update client address.
 		if cur := p.clientAddr.Load(); cur == nil || *cur != addr {

@@ -536,6 +536,109 @@ func TestProxyReconnectDuringTraffic(t *testing.T) {
 	t.Log("proxy recovered from mid-stream reconnect")
 }
 
+// TestProxyClientToServerSetsLastActive verifies that packets received from
+// the client (e.g. WG keepalives) mark the proxy as active, preventing
+// false timeout reconnects when only client->server traffic flows.
+func TestProxyClientToServerSetsLastActive(t *testing.T) {
+	cfg := ams42Config()
+
+	mockServer := startMockServer(t)
+	defer mockServer.Close()
+	mockAddr := mockServer.LocalAddr().(*net.UDPAddr)
+
+	proxy, proxyAddr, stopProxy := startProxyWithHandle(t, cfg, mockAddr)
+	defer stopProxy()
+
+	clientConn, err := net.DialUDP("udp", nil, proxyAddr)
+	if err != nil {
+		t.Fatal("dial: ", err)
+	}
+	defer clientConn.Close()
+
+	// Establish session.
+	_ = establishSession(t, cfg, clientConn, mockServer)
+
+	// Clear lastActive — simulate the timeout checker clearing it.
+	proxy.lastActive.Store(false)
+
+	// Send a transport packet (simulates WG keepalive from client).
+	pkt := makeWGPacket(wgTransportData, 64)
+	if _, err := clientConn.Write(pkt); err != nil {
+		t.Fatal("write: ", err)
+	}
+
+	// Wait for the proxy to process the packet.
+	_ = readPackets(mockServer, 2*time.Second, 1)
+
+	// lastActive must be true now.
+	if !proxy.lastActive.Load() {
+		t.Fatal("lastActive should be true after client->server packet")
+	}
+
+	// Verify it resets again after CAS by timeout checker logic.
+	if !proxy.lastActive.CompareAndSwap(true, false) {
+		t.Fatal("CAS should succeed (lastActive was true)")
+	}
+
+	// Send another packet.
+	pkt2 := makeWGPacket(wgTransportData, 64)
+	if _, err := clientConn.Write(pkt2); err != nil {
+		t.Fatal("write2: ", err)
+	}
+	_ = readPackets(mockServer, 2*time.Second, 1)
+
+	if !proxy.lastActive.Load() {
+		t.Fatal("lastActive should be true after second client->server packet")
+	}
+
+	t.Log("clientToServer correctly sets lastActive on every packet")
+}
+
+// TestProxyNoFalseReconnectOnKeepalive verifies that the proxy does NOT
+// trigger a reconnect when only client->server keepalives flow (no server
+// responses). This was the exact bug: timeout checker saw no activity
+// because clientToServer never set lastActive.
+func TestProxyNoFalseReconnectOnKeepalive(t *testing.T) {
+	cfg := ams42Config()
+	cfg.Timeout = 2 // 2-second timeout for fast test
+
+	mockServer := startMockServer(t)
+	defer mockServer.Close()
+	mockAddr := mockServer.LocalAddr().(*net.UDPAddr)
+
+	proxy, proxyAddr, stopProxy := startProxyWithHandle(t, cfg, mockAddr)
+	defer stopProxy()
+
+	clientConn, err := net.DialUDP("udp", nil, proxyAddr)
+	if err != nil {
+		t.Fatal("dial: ", err)
+	}
+	defer clientConn.Close()
+
+	// Establish session.
+	_ = establishSession(t, cfg, clientConn, mockServer)
+
+	// Record initial remote connection.
+	initialConn := proxy.remoteConn.Load()
+
+	// Send keepalive-like packets every 500ms for 4 seconds (2x timeout).
+	// The proxy should NOT reconnect because each packet sets lastActive.
+	for i := 0; i < 8; i++ {
+		pkt := makeWGPacket(wgTransportData, 64)
+		clientConn.Write(pkt)
+		_ = readPackets(mockServer, 500*time.Millisecond, 1)
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Verify the remote connection was NOT replaced (no reconnect).
+	currentConn := proxy.remoteConn.Load()
+	if currentConn != initialConn {
+		t.Fatal("proxy reconnected despite active client->server traffic (false reconnect bug)")
+	}
+
+	t.Log("no false reconnect during 4s of client->server keepalive traffic with 2s timeout")
+}
+
 // TestProxyShutdownDuringReconnect verifies that requesting shutdown while
 // the proxy is in the reconnect loop doesn't hang.
 func TestProxyShutdownDuringReconnect(t *testing.T) {

@@ -43,6 +43,10 @@ Compatible with AWG v1 and v2 -- the version is detected automatically based on 
 
 Done. The configurator works offline; no data is sent to any server.
 
+![Speed test on MikroTik AX3](https://github.com/user-attachments/assets/9fb34444-681b-4f34-8306-8f202f1b121d)
+
+*Speed test on MikroTik AX3*
+
 ## Requirements
 
 - An AmneziaWG server with known obfuscation parameters
@@ -148,6 +152,33 @@ The container should show `running` status, and the peer should have a `last-han
 The obfuscation parameters (`Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`--`H4`) are in the `[Interface]` section, while `Endpoint` and `PublicKey` are in the `[Peer]` section.
 
 ## Additional Settings
+
+### All Environment Variables
+
+| Variable | Required | Description |
+|----------|:---:|-------------|
+| `AWG_LISTEN` | Yes | Listen address (e.g., `:51820`) |
+| `AWG_REMOTE` | Yes | AWG server address -- Endpoint from `[Peer]` (e.g., `1.2.3.4:443`) |
+| `AWG_JC` | Yes | Junk packet count (Jc from .conf) |
+| `AWG_JMIN` | Yes | Min junk packet size (Jmin) |
+| `AWG_JMAX` | Yes | Max junk packet size (Jmax) |
+| `AWG_S1` | Yes | Handshake init padding bytes (S1) |
+| `AWG_S2` | Yes | Handshake response padding bytes (S2) |
+| `AWG_H1` | Yes | Handshake init type (H1); can be a `min-max` range for v2 |
+| `AWG_H2` | Yes | Handshake response type (H2); can be a range for v2 |
+| `AWG_H3` | Yes | Cookie reply type (H3); can be a range for v2 |
+| `AWG_H4` | Yes | Transport data type (H4); can be a range for v2 |
+| `AWG_SERVER_PUB` | Yes | Server public key, base64 (PublicKey from `[Peer]`) |
+| `AWG_CLIENT_PUB` | Yes | Client public key, base64 |
+| `AWG_S3` | No | Cookie reply padding bytes (v2) |
+| `AWG_S4` | No | Transport data padding bytes (v2) |
+| `AWG_I1`--`AWG_I5` | No | CPS templates (v1.5/v2); up to 5 templates |
+| `AWG_TIMEOUT` | No | Inactivity timeout in seconds (default: 180) |
+| `AWG_LOG_LEVEL` | No | `none`, `error`, `info`, `debug` (default: `info`) |
+| `AWG_SOCKET_BUF` | No | Socket buffer size in bytes (default: 16 MB) |
+| `AWG_GOMAXPROCS` | No | Number of Go threads (default: 2) |
+
+The protocol version is detected automatically: **v2** if S3/S4 are set or H values are ranges, **v1.5** if CPS templates (I1-I5) are set, otherwise **v1**.
 
 ### Routing Traffic Through the Tunnel
 

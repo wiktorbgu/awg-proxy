@@ -217,6 +217,7 @@ func (p *Proxy) clientToServerBatch(listenConn *net.UDPConn) {
 			LogError(p.cfg, "listen batch read: ", err.Error())
 			continue
 		}
+		p.lastActive.Store(true)
 
 		currentRemote := p.remoteConn.Load()
 		if currentRemote != sendConn {

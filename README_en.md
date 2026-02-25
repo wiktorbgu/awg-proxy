@@ -8,6 +8,21 @@
 
 Lightweight Docker container that allows MikroTik routers to connect to AmneziaWG servers. All traffic is encrypted by the router's native WireGuard client; the container only transforms the packet format.
 
+## Table of Contents
+
+- [How It Works](#how-it-works)
+- [Quick Start (Configurator)](#quick-start-configurator)
+- [Requirements](#requirements)
+- [Manual Installation](#manual-installation)
+- [Getting AWG Parameters](#getting-awg-parameters)
+- [Additional Settings](#additional-settings)
+- [Uninstallation](#uninstallation)
+- [Troubleshooting](#troubleshooting)
+  - [Insufficient disk space](#insufficient-disk-space)
+  - [not allowed by device-mode](#not-allowed-by-device-mode)
+- [Building from Source](#building-from-source)
+- [License](#license)
+
 ## How It Works
 
 ```
@@ -34,7 +49,7 @@ Done. The configurator works offline; no data is sent to any server.
 - Configuration file `.conf` exported from AmneziaVPN
 - MikroTik RouterOS 7.4+ with the **container** package
   - **RouterOS 7.21+**: standard images `awg-proxy-{arch}.tar.gz` (OCI format)
-  - **RouterOS 7.20 and below**: images `awg-proxy-{arch}-7.20-longterm.tar.gz` (Docker format)
+  - **RouterOS 7.20 and below**: images `awg-proxy-{arch}-7.20-Docker.tar.gz` (Docker format)
   - The configurator detects the version automatically
 - Architecture: ARM64, ARM (v7), or x86_64 ([check your device](https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container))
 - At least 5 MB disk space, 16+ MB RAM recommended
@@ -53,7 +68,7 @@ The router will ask for confirmation (button press or reboot, depending on the m
 
 ### 2. Upload Image
 
-Download `awg-proxy-{arch}.tar.gz` from [Releases](https://github.com/amneziawg-mikrotik/awg-proxy/releases/latest) and upload it to the router via Winbox or SCP. For RouterOS 7.20 and below, use files with the `-7.20-longterm` suffix (Docker format).
+Download `awg-proxy-{arch}.tar.gz` from [Releases](https://github.com/amneziawg-mikrotik/awg-proxy/releases/latest) and upload it to the router via Winbox or SCP. For RouterOS 7.20 and below, use files with the `-7.20-Docker` suffix (Docker format).
 
 Or download directly on the router (replace URL with the actual one):
 
@@ -238,6 +253,60 @@ The script removes the container, WireGuard interface, NAT rules, routes, enviro
 **No traffic after handshake** -- check the NAT rule (`/ip/firewall/nat/print`), routing, and the peer's `endpoint-address` (should be `172.18.0.2`).
 
 **Container keeps restarting** -- set `AWG_LOG_LEVEL=info` and check the logs. Common cause: missing environment variables.
+
+### Insufficient disk space
+
+If you get `Insufficient disk space` error during container installation and you have free space on an external drive (USB, SD, NVMe) -- reconfigure the image download directory:
+
+```routeros
+/container/config set tmpdir=usb1/pull ram-high=200M
+```
+
+Replace `usb1` with your drive name (`usb1`, `usb2`, `sd1`, `nvme1`, `sata1`). After the container is installed, you can revert:
+
+```routeros
+/container/config set tmpdir="" ram-high=0
+```
+
+If using the configurator -- select the appropriate drive in the "Container storage" field, and tmpdir will be configured automatically.
+
+### not allowed by device-mode
+
+If you get `not allowed by device-mode` error when downloading an image or creating a container, containers are not enabled. Run:
+
+```routeros
+/system/device-mode/update container=yes
+```
+
+The router will ask for confirmation -- press the Reset or Mode button on the device (depends on model) within a few minutes, or wait for automatic reboot. After reboot, retry the installation.
+
+## Building from Source
+
+Requires Go 1.25+, Docker (for container images), and make.
+
+```bash
+# Tests
+make test
+
+# Local binary build
+make build
+
+# Docker images (OCI, for RouterOS 7.21+)
+make docker-arm64    # ARM64
+make docker-arm      # ARM v7
+make docker-armv5    # ARM v5
+make docker-amd64    # x86_64
+make docker-all      # All architectures
+
+# Docker images (classic format, for RouterOS 7.20 and below)
+make docker-arm64-7.20-docker
+make docker-arm-7.20-docker
+make docker-armv5-7.20-docker
+make docker-amd64-7.20-docker
+make docker-all-7.20-docker
+```
+
+Artifacts are created in the `builds/` directory.
 
 ## License
 

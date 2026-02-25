@@ -68,19 +68,19 @@ jobs:
         run: docker buildx build --platform linux/amd64 --output type=oci,dest=awg-proxy-amd64.tar -t awg-proxy:amd64 .
 
       - name: Build Docker image for RouterOS 7.20 LT (arm64)
-        run: scripts/mkdockertar.sh linux arm64 "" awg-proxy:arm64 awg-proxy-arm64-7.20-longterm.tar
+        run: scripts/mkdockertar.sh linux arm64 "" awg-proxy:arm64 awg-proxy-arm64-7.20-Docker.tar
 
       - name: Build Docker image for RouterOS 7.20 LT (arm/v7)
-        run: scripts/mkdockertar.sh linux arm 7 awg-proxy:arm awg-proxy-arm-7.20-longterm.tar
+        run: scripts/mkdockertar.sh linux arm 7 awg-proxy:arm awg-proxy-arm-7.20-Docker.tar
 
       - name: Build Docker image for RouterOS 7.20 LT (arm/v5)
-        run: scripts/mkdockertar.sh linux arm 5 awg-proxy:armv5 awg-proxy-armv5-7.20-longterm.tar
+        run: scripts/mkdockertar.sh linux arm 5 awg-proxy:armv5 awg-proxy-armv5-7.20-Docker.tar
 
       - name: Build Docker image for RouterOS 7.20 LT (amd64)
-        run: scripts/mkdockertar.sh linux amd64 "" awg-proxy:amd64 awg-proxy-amd64-7.20-longterm.tar
+        run: scripts/mkdockertar.sh linux amd64 "" awg-proxy:amd64 awg-proxy-amd64-7.20-Docker.tar
 
       - name: Gzip tar files
-        run: gzip awg-proxy-arm64.tar awg-proxy-arm.tar awg-proxy-armv5.tar awg-proxy-amd64.tar awg-proxy-arm64-7.20-longterm.tar awg-proxy-arm-7.20-longterm.tar awg-proxy-armv5-7.20-longterm.tar awg-proxy-amd64-7.20-longterm.tar
+        run: gzip awg-proxy-arm64.tar awg-proxy-arm.tar awg-proxy-armv5.tar awg-proxy-amd64.tar awg-proxy-arm64-7.20-Docker.tar awg-proxy-arm-7.20-Docker.tar awg-proxy-armv5-7.20-Docker.tar awg-proxy-amd64-7.20-Docker.tar
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -96,7 +96,7 @@ jobs:
             awg-proxy-arm.tar.gz
             awg-proxy-armv5.tar.gz
             awg-proxy-amd64.tar.gz
-            awg-proxy-arm64-7.20-longterm.tar.gz
-            awg-proxy-arm-7.20-longterm.tar.gz
-            awg-proxy-armv5-7.20-longterm.tar.gz
-            awg-proxy-amd64-7.20-longterm.tar.gz
+            awg-proxy-arm64-7.20-Docker.tar.gz
+            awg-proxy-arm-7.20-Docker.tar.gz
+            awg-proxy-armv5-7.20-Docker.tar.gz
+            awg-proxy-amd64-7.20-Docker.tar.gz

@@ -3,7 +3,7 @@ IMAGE_NAME = awg-proxy
 BUILD_DIR = builds
 
 .PHONY: build test clean docker-arm64 docker-arm docker-armv5 docker-amd64 docker-all \
-	docker-arm64-7.20-longterm docker-arm-7.20-longterm docker-armv5-7.20-longterm docker-amd64-7.20-longterm docker-all-7.20-longterm \
+	docker-arm64-7.20-docker docker-arm-7.20-docker docker-armv5-7.20-docker docker-amd64-7.20-docker docker-all-7.20-docker \
 	binary-arm64 binary-arm binary-armv5 binary-amd64 binary-all
 
 LDFLAGS = -s -w -X main.version=$(VERSION)
@@ -52,27 +52,27 @@ docker-amd64:
 
 docker-all: docker-arm64 docker-arm docker-armv5 docker-amd64
 
-docker-arm64-7.20-longterm:
+docker-arm64-7.20-docker:
 	@mkdir -p $(BUILD_DIR)
-	VERSION=$(VERSION) scripts/mkdockertar.sh linux arm64 "" $(IMAGE_NAME):$(VERSION)-arm64 $(BUILD_DIR)/$(IMAGE_NAME)-arm64-7.20-longterm.tar
-	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-arm64-7.20-longterm.tar
+	VERSION=$(VERSION) scripts/mkdockertar.sh linux arm64 "" $(IMAGE_NAME):$(VERSION)-arm64 $(BUILD_DIR)/$(IMAGE_NAME)-arm64-7.20-Docker.tar
+	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-arm64-7.20-Docker.tar
 
-docker-arm-7.20-longterm:
+docker-arm-7.20-docker:
 	@mkdir -p $(BUILD_DIR)
-	VERSION=$(VERSION) scripts/mkdockertar.sh linux arm 7 $(IMAGE_NAME):$(VERSION)-arm $(BUILD_DIR)/$(IMAGE_NAME)-arm-7.20-longterm.tar
-	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-arm-7.20-longterm.tar
+	VERSION=$(VERSION) scripts/mkdockertar.sh linux arm 7 $(IMAGE_NAME):$(VERSION)-arm $(BUILD_DIR)/$(IMAGE_NAME)-arm-7.20-Docker.tar
+	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-arm-7.20-Docker.tar
 
-docker-armv5-7.20-longterm:
+docker-armv5-7.20-docker:
 	@mkdir -p $(BUILD_DIR)
-	VERSION=$(VERSION) scripts/mkdockertar.sh linux arm 5 $(IMAGE_NAME):$(VERSION)-armv5 $(BUILD_DIR)/$(IMAGE_NAME)-armv5-7.20-longterm.tar
-	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-armv5-7.20-longterm.tar
+	VERSION=$(VERSION) scripts/mkdockertar.sh linux arm 5 $(IMAGE_NAME):$(VERSION)-armv5 $(BUILD_DIR)/$(IMAGE_NAME)-armv5-7.20-Docker.tar
+	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-armv5-7.20-Docker.tar
 
-docker-amd64-7.20-longterm:
+docker-amd64-7.20-docker:
 	@mkdir -p $(BUILD_DIR)
-	VERSION=$(VERSION) scripts/mkdockertar.sh linux amd64 "" $(IMAGE_NAME):$(VERSION)-amd64 $(BUILD_DIR)/$(IMAGE_NAME)-amd64-7.20-longterm.tar
-	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-amd64-7.20-longterm.tar
+	VERSION=$(VERSION) scripts/mkdockertar.sh linux amd64 "" $(IMAGE_NAME):$(VERSION)-amd64 $(BUILD_DIR)/$(IMAGE_NAME)-amd64-7.20-Docker.tar
+	gzip -f $(BUILD_DIR)/$(IMAGE_NAME)-amd64-7.20-Docker.tar
 
-docker-all-7.20-longterm: docker-arm64-7.20-longterm docker-arm-7.20-longterm docker-armv5-7.20-longterm docker-amd64-7.20-longterm
+docker-all-7.20-docker: docker-arm64-7.20-docker docker-arm-7.20-docker docker-armv5-7.20-docker docker-amd64-7.20-docker
 
 binary-arm64:
 	@mkdir -p $(BUILD_DIR)

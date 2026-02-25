@@ -9,10 +9,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Run tests
+        run: go test -v -race ./...
+
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - name: Checkout code
@@ -25,10 +39,7 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: Run tests
-        run: go test -v -race ./...
-
-      - name: Bump version tag
+      - name: Compute version tag
         id: tag
         run: |
           LATEST=$(git tag -l 'v*' | sort -V | tail -1)
@@ -37,17 +48,16 @@ jobs:
           MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
           PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
           NEW="v${MAJOR}.${MINOR}.$((PATCH+1))"
-          git tag "$NEW"
-          git push origin "$NEW"
           echo "tag=$NEW" >> "$GITHUB_OUTPUT"
           echo "$LATEST -> $NEW"
 
       - name: Build binaries
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-arm64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-arm .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-armv5 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-arm64 . &
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-arm . &
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-armv5 . &
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.tag.outputs.tag }}" -o awg-proxy-linux-amd64 . &
+          wait
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
@@ -55,37 +65,71 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image (arm64)
-        run: docker buildx build --platform linux/arm64 --output type=oci,dest=awg-proxy-arm64.tar -t awg-proxy:arm64 .
+      - name: Build Docker OCI images
+        run: |
+          docker buildx build --platform linux/arm64 --output type=oci,dest=awg-proxy-arm64.tar -t awg-proxy:arm64 . &
+          docker buildx build --platform linux/arm/v7 --output type=oci,dest=awg-proxy-arm.tar -t awg-proxy:arm . &
+          docker buildx build --platform linux/arm/v5 --output type=oci,dest=awg-proxy-armv5.tar -t awg-proxy:armv5 . &
+          docker buildx build --platform linux/amd64 --output type=oci,dest=awg-proxy-amd64.tar -t awg-proxy:amd64 . &
+          wait
 
-      - name: Build Docker image (arm/v7)
-        run: docker buildx build --platform linux/arm/v7 --output type=oci,dest=awg-proxy-arm.tar -t awg-proxy:arm .
-
-      - name: Build Docker image (arm/v5)
-        run: docker buildx build --platform linux/arm/v5 --output type=oci,dest=awg-proxy-armv5.tar -t awg-proxy:armv5 .
-
-      - name: Build Docker image (amd64)
-        run: docker buildx build --platform linux/amd64 --output type=oci,dest=awg-proxy-amd64.tar -t awg-proxy:amd64 .
-
-      - name: Build Docker image for RouterOS 7.20 LT (arm64)
-        run: scripts/mkdockertar.sh linux arm64 "" awg-proxy:arm64 awg-proxy-arm64-7.20-Docker.tar
-
-      - name: Build Docker image for RouterOS 7.20 LT (arm/v7)
-        run: scripts/mkdockertar.sh linux arm 7 awg-proxy:arm awg-proxy-arm-7.20-Docker.tar
-
-      - name: Build Docker image for RouterOS 7.20 LT (arm/v5)
-        run: scripts/mkdockertar.sh linux arm 5 awg-proxy:armv5 awg-proxy-armv5-7.20-Docker.tar
-
-      - name: Build Docker image for RouterOS 7.20 LT (amd64)
-        run: scripts/mkdockertar.sh linux amd64 "" awg-proxy:amd64 awg-proxy-amd64-7.20-Docker.tar
+      - name: Build Docker images for RouterOS 7.20 LT
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          scripts/mkdockertar.sh linux arm64 "" awg-proxy:arm64 awg-proxy-arm64-7.20-Docker.tar &
+          scripts/mkdockertar.sh linux arm 7 awg-proxy:arm awg-proxy-arm-7.20-Docker.tar &
+          scripts/mkdockertar.sh linux arm 5 awg-proxy:armv5 awg-proxy-armv5-7.20-Docker.tar &
+          scripts/mkdockertar.sh linux amd64 "" awg-proxy:amd64 awg-proxy-amd64-7.20-Docker.tar &
+          wait
 
       - name: Gzip tar files
         run: gzip awg-proxy-arm64.tar awg-proxy-arm.tar awg-proxy-armv5.tar awg-proxy-amd64.tar awg-proxy-arm64-7.20-Docker.tar awg-proxy-arm-7.20-Docker.tar awg-proxy-armv5-7.20-Docker.tar awg-proxy-amd64-7.20-Docker.tar
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            awg-proxy-linux-arm64
+            awg-proxy-linux-arm
+            awg-proxy-linux-armv5
+            awg-proxy-linux-amd64
+            awg-proxy-arm64.tar.gz
+            awg-proxy-arm.tar.gz
+            awg-proxy-armv5.tar.gz
+            awg-proxy-amd64.tar.gz
+            awg-proxy-arm64-7.20-Docker.tar.gz
+            awg-proxy-arm-7.20-Docker.tar.gz
+            awg-proxy-armv5-7.20-Docker.tar.gz
+            awg-proxy-amd64-7.20-Docker.tar.gz
+
+  release:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push version tag
+        run: |
+          git tag "${{ needs.build.outputs.tag }}"
+          git push origin "${{ needs.build.outputs.tag }}"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ needs.build.outputs.tag }}
           generate_release_notes: true
           files: |
             awg-proxy-linux-arm64

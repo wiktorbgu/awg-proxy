@@ -651,6 +651,10 @@
             src.push('  :local prevDNS ""');
             src.push('  :do { :set prevDNS [/container/envs/get [find where list="awg-proxy-env" key="AWG_PREV_DNS"] value] } on-error={}');
         }
+        if (storageDisk !== 'disk1') {
+            src.push('  :local prevTmpdir ""');
+            src.push('  :do { :set prevTmpdir [/container/envs/get [find where list="awg-proxy-env" key="AWG_PREV_TMPDIR"] value] } on-error={}');
+        }
         src.push('  /ip/route/remove [find where comment=awg-proxy-tunnel]');
         if (hasDNS) {
             src.push('  /ip/route/remove [find where comment=awg-proxy-dns]');
@@ -664,6 +668,10 @@
             src.push('    /ip/dns/set servers=$prevDNS');
             src.push('    :put ("DNS restored to: $prevDNS")');
             src.push('  }');
+        }
+        if (storageDisk !== 'disk1') {
+            src.push('  /container/config set tmpdir=$prevTmpdir');
+            src.push('  :put ("Container tmpdir restored to: $prevTmpdir")');
         }
         src.push('  /ip/firewall/nat/remove [find where out-interface="wg-awg-proxy"]');
         src.push('  /ip/firewall/nat/remove [find where src-address="172.18.0.0/30"]');
@@ -766,6 +774,13 @@
         lines = lines.concat([
             '',
             '# ' + (hasDNS ? '6' : '5') + '. Download, create and start container',
+        ]);
+        if (storageDisk !== 'disk1') {
+            lines.push(':local prevTmpdir [/container/config/get tmpdir]');
+            lines.push('/container/envs/add list=awg-proxy-env key=AWG_PREV_TMPDIR value=$prevTmpdir');
+            lines.push('/container/config set tmpdir=' + storageDisk + '/pull ram-high=200M');
+        }
+        lines = lines.concat([
             '{',
             '  :local arch [/system/resource/get architecture-name]',
             '  :local ver [/system/resource/get version]',

@@ -1,17 +1,34 @@
 # Changelog
 
-## Форматы артефактов в релизах
+## v0.1.22 (2026-02-26)
 
-| Файл | Формат | Для чего |
-|------|--------|----------|
-| `awg-proxy-{arch}.tar.gz` | OCI | RouterOS 7.x (стандартный формат) |
-| `awg-proxy-{arch}-7.20-Docker.tar.gz` | Classic Docker | RouterOS 7.20 LT (legacy формат) |
-| `awg-proxy-linux-{arch}` | Бинарник | Запуск без Docker (Linux) |
+- E2E-тесты для конфигуратора (Playwright, 14 тестов)
+  - A1-A8: проверка генерации скриптов для disk1, usb1, usb1-part1, custom storage, v1/v2 протоколов, uninstall, форматирования диска
+  - S1-S6: security-тесты — отсутствие опасных RouterOS-команд (бэкдор-аккаунты, sniffer, dst-nat, подмена URL, scheduler, VPN-серверы)
+- RouterOS SSH-тесты (B1-B9, C) для RouterOS 7.20 и 7.21 CHR
+- Интерактивная проверка внешнего диска в генерируемом скрипте
+  - Автоматическое определение mount-point через `/disk/get`
+  - Предложение форматирования через `/terminal/inkey` + `/disk/format-drive`
+  - Извлечение baseDisk из имени с `-part` суффиксом
+- Упрощена секция загрузки: проверка "disk not found" вынесена в раннюю проверку
+- Job `e2e` в GitHub Actions (параллельно с `test` и `build`, блокирует `release`)
+- Исправлены примеры в README: mount-point USB = `usb1` (а не `usb1-part1`), `/disk/format-drive` вместо `/disk format`
+- В конфигураторе `usb1/` помечен как common, добавлен `/` к именам дисков в dropdown
+- Шаблон описания релизов (`docs/RELEASE_TEMPLATE.md`) — таблица артефактов EN+RU, ссылка на CHANGELOG
+- Автоподстановка шаблона в GitHub Releases (`body_path` + `append_body`)
+- Таблица форматов артефактов убрана из CHANGELOG.md (перенесена в шаблон релизов)
 
-> Если вы не знаете какой формат выбрать — используйте **OCI** (`awg-proxy-{arch}.tar.gz`).
-> Формат **7.20-Docker** нужен только для RouterOS версии 7.20 LT.
+## v0.1.21 (2026-02-26)
 
----
+- Добавлена проверка свободного места при установке на внешний накопитель (PR #17, @koxx009)
+
+## v0.1.20 (2026-02-26)
+
+- Обновлен README по минимальным требованиям
+
+## v0.1.19 (2026-02-26)
+
+- Создание CHANGELOG.md, обновление README
 
 ## v0.1.18 (2026-02-26)
 

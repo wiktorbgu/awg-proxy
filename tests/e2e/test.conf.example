@@ -1,0 +1,32 @@
+# Copy this file to test.conf and fill in your AmneziaWG values.
+# test.conf is gitignored and MUST NOT be committed.
+
+[Interface]
+Address = 10.8.1.2/32
+DNS = 1.1.1.1, 8.8.8.8
+PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+Jc = 4
+Jmin = 10
+Jmax = 50
+S1 = 100
+S2 = 80
+S3 = 0
+S4 = 0
+# H values: single uint32 for v1, or MIN-MAX range for v2
+H1 = 1234567890
+H2 = 1234567891
+H3 = 1234567892
+H4 = 1234567893
+# CPS templates (v1.5+), leave empty if not used
+I1 =
+I2 =
+I3 =
+I4 =
+I5 =
+
+[Peer]
+PublicKey = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+PresharedKey = CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 203.0.113.1:51820
+PersistentKeepalive = 25

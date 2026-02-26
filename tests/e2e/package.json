@@ -1,0 +1,14 @@
+{
+  "name": "awg-proxy-e2e",
+  "private": true,
+  "scripts": {
+    "test": "npx playwright test configurator.test.js",
+    "ros-up": "docker compose up -d",
+    "ros-down": "docker compose down",
+    "ros-wait": "./helpers/wait-for-ros.sh 2220 2221",
+    "ros-test": "./routeros-test.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}

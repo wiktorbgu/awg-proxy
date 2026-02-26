@@ -314,15 +314,16 @@
         <div style="margin-top:14px">
             <label for="storage-select">Container storage</label>
             <select id="storage-select">
-                <option value="disk1">disk1 — internal storage (default)</option>
-                <option value="usb1">usb1 — USB flash drive</option>
-                <option value="usb2">usb2 — USB flash drive (2nd)</option>
-                <option value="sd1">sd1 — SD / microSD card</option>
-                <option value="nvme1">nvme1 — NVMe SSD</option>
-                <option value="sata1">sata1 — SATA drive</option>
+                <option value="disk1">disk1/ — internal storage (default)</option>
+                <option value="usb1">usb1/ — USB flash drive (common)</option>
+                <option value="usb1-part1">usb1-part1/ — USB partition</option>
+                <option value="usb2">usb2/ — USB flash drive (2nd)</option>
+                <option value="sd1">sd1/ — SD / microSD card</option>
+                <option value="nvme1">nvme1/ — NVMe SSD</option>
+                <option value="sata1">sata1/ — SATA drive</option>
                 <option value="__custom">Custom...</option>
             </select>
-            <input type="text" id="storage-custom" placeholder="e.g. usb1-part1" style="display:none">
+            <input type="text" id="storage-custom" placeholder="e.g. sata1-part1" style="display:none">
         </div>
         <div class="actions">
             <button class="btn btn-primary" onclick="generate()">Generate commands</button>
@@ -682,6 +683,9 @@
         src.push('  /interface/wireguard/remove [find where name="wg-awg-proxy"]');
         src.push('  :do { /file/remove [find where name~"awg-proxy.+tar"] } on-error={}');
         src.push('  :do { /file/remove [find where name="' + storageDisk + '/awg-proxy"] } on-error={}');
+        if (storageDisk !== 'disk1') {
+            src.push('  :do { /file/remove [find where name~"' + storageDisk + '/pull"] } on-error={}');
+        }
         src.push('  :put "Uninstall AmneziaWG Proxy complete!"');
         src.push('  :log info "Uninstall AmneziaWG Proxy complete!"');
         src.push('  /system/script/remove [find where name=awg-proxy-uninstall]');
@@ -718,8 +722,52 @@
             '  :error "Usage: /system/device-mode/update container=yes"',
             '}',
             '',
-            '# 1. Uninstall script',
         ];
+
+        if (storageDisk !== 'disk1') {
+            lines = lines.concat([
+                '# Check storage device',
+                '{',
+                '  :local targetDisk "' + storageDisk + '"',
+                '  :local diskFree 0',
+                '  :do { :set diskFree [/disk/get [find where mount-point=$targetDisk] free] } on-error={}',
+                '  :if ($diskFree = 0) do={',
+                '    :local baseDisk $targetDisk',
+                '    :local dashPos [:find $targetDisk "-part"]',
+                '    :if ([:typeof $dashPos] != "nil") do={ :set baseDisk [:pick $targetDisk 0 $dashPos] }',
+                '    :if ([:len [/disk/find where slot=$baseDisk]] > 0) do={',
+                '      :put ("Device $baseDisk found but $targetDisk is not available.")',
+                '      :put "Format $baseDisk as ext4? ALL DATA WILL BE ERASED!"',
+                "      :put \"Press 'y' to confirm, any other key to cancel:\"",
+                '      :local key [/terminal/inkey timeout=30]',
+                '      :if ($key = 121 || $key = 89) do={',
+                '        :put "Formatting $baseDisk as ext4..."',
+                '        /disk/format-drive $baseDisk file-system=ext4 label=$baseDisk',
+                '        :delay 3s',
+                '        :do { :set diskFree [/disk/get [find where mount-point=$targetDisk] free] } on-error={}',
+                '        :if ($diskFree = 0) do={',
+                '          :put ("ERROR: $targetDisk not found after formatting.")',
+                '          :put "Check mount point: /disk/print"',
+                '          :error ("Mount point $targetDisk not found after formatting")',
+                '        }',
+                '        :put ("Formatted OK. Free: " . ($diskFree / 1048576) . " MB")',
+                '      } else={',
+                '        :error "Formatting cancelled"',
+                '      }',
+                '    } else={',
+                '      :put ("ERROR: Storage device $targetDisk not found.")',
+                '      :put "Check available disks: /disk/print"',
+                '      :error ("Storage not found: " . $targetDisk)',
+                '    }',
+                '  } else={',
+                '    :put ("Storage OK: $targetDisk (" . ($diskFree / 1048576) . " MB free)")',
+                '  }',
+                '}',
+                '',
+            ]);
+        }
+
+        lines.push('# 1. Uninstall script');
 
         lines.push(buildUninstallScriptSource(hasDNS, storageDisk));
 
@@ -797,31 +845,34 @@
             '  :if ($arch ~ "x86") do={ :set file ("awg-proxy-amd64" . $suffix . ".tar.gz") }',
             '  :if ($file = "") do={ :error "Unsupported architecture: $arch" }',
             '  :local url "https://github.com/amneziawg-mikrotik/awg-proxy/releases/latest/download/$file"',
-            '  :if ([:len [/file/find where name=$file]] = 0) do={',
-            '    :local targetDisk "' + storageDisk + '"',
+            '  :local filePath ' + (storageDisk !== 'disk1' ? '("' + storageDisk + '/pull/" . $file)' : '$file'),
+        ]);
+        if (storageDisk !== 'disk1') {
+            lines.push('  :do { /file/make-directory ' + storageDisk + '/pull } on-error={}');
+        }
+        lines = lines.concat([
+            '  :if ([:len [/file/find where name=$filePath]] = 0) do={',
             '    :local freeStorage 0',
-            '    :if ($targetDisk = "disk1") do={',
-            '      :set freeStorage [/system/resource/get free-hdd-space]',
-            '    } else={',
-            '      :do { :set freeStorage [/disk/get [find where mount-point=$targetDisk] free] } on-error={}',
-            '      :if ($freeStorage = 0) do={',
-            '        :put ("ERROR: Storage device " . $targetDisk . " not found or has 0 free space.")',
-            '        :error ("Invalid storage device: " . $targetDisk)',
-            '      }',
-            '    }',
+        ]);
+        if (storageDisk === 'disk1') {
+            lines.push('    :set freeStorage [/system/resource/get free-hdd-space]');
+        } else {
+            lines.push('    :do { :set freeStorage [/disk/get [find where mount-point="' + storageDisk + '"] free] } on-error={}');
+        }
+        lines = lines.concat([
             '    :if ($freeStorage < 5242880) do={',
             '      :put ("WARNING: Low disk space (" . ($freeStorage / 1048576) . "MB free). Need at least 5MB.")',
             '      :put "See: https://github.com/amneziawg-mikrotik/awg-proxy#insufficient-disk-space"',
             '      :error "Insufficient disk space"',
             '    }',
-            '    :put "Fetching: $url"',
-            '    /tool/fetch url=$url dst-path=$file http-max-redirect-count=10',
+            '    :put ("Fetching: $url -> " . $filePath)',
+            '    /tool/fetch url=$url dst-path=$filePath http-max-redirect-count=10',
             '  } else={',
-            '    :put "File $file already exists, skipping download"',
+            '    :put ("File already exists: " . $filePath)',
             '  }',
-            '  /container/add file=$file interface=veth-awg-proxy envlist=awg-proxy-env hostname=awg-proxy root-dir=' + storageDisk + '/awg-proxy logging=yes start-on-boot=yes comment=awg-proxy',
+            '  /container/add file=$filePath interface=veth-awg-proxy envlist=awg-proxy-env hostname=awg-proxy root-dir=' + storageDisk + '/awg-proxy logging=yes start-on-boot=yes comment=awg-proxy',
             '  :if ($minor > 20) do={ [:parse "/container/set [find where interface=veth-awg-proxy] shm-size=4M"] }',
-            '  /file/remove $file',
+            '  /file/remove $filePath',
             '  :local freeMem [/system/resource/get free-memory]',
             '  :if ($freeMem < 16777216) do={',
             '    :put ("WARNING: Low memory (" . ($freeMem / 1048576) . "MB free). 16MB+ recommended.")',

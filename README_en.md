@@ -18,6 +18,7 @@ Lightweight Docker container that allows MikroTik routers to connect to AmneziaW
 - [Additional Settings](#additional-settings)
 - [Uninstallation](#uninstallation)
 - [Troubleshooting](#troubleshooting)
+  - [Storage device not found](#storage-device-not-found)
   - [Insufficient disk space](#insufficient-disk-space)
   - [not allowed by device-mode](#not-allowed-by-device-mode)
   - [child spawn failed / could not load next layer](#child-spawn-failed--could-not-load-next-layer)
@@ -287,6 +288,26 @@ The script removes the container, WireGuard interface, NAT rules, routes, enviro
 
 **Container keeps restarting** -- set `AWG_LOG_LEVEL=info` and check the logs. Common cause: missing environment variables.
 
+### Storage device not found
+
+If you get `Storage device usb1 not found or has 0 free space` error -- the disk is not formatted or the mount point name doesn't match.
+
+1. Check available disks:
+
+```routeros
+/disk/print
+```
+
+2. If the disk is visible as a block device but has no partition -- format it as ext4:
+
+```routeros
+/disk/format-drive usb1 file-system=ext4 label=usb1
+```
+
+3. After formatting, the disk will be available as a mount-point (usually `usb1`). Check the name via `/disk/print` and use it in the configurator ("Container storage" field).
+
+> **Important:** Containers require ext4 filesystem. FAT32 is not supported.
+
 ### Insufficient disk space
 
 If you get `Insufficient disk space` error during container installation and you have free space on an external drive (USB, SD, NVMe) -- reconfigure the image download directory:
@@ -295,7 +316,9 @@ If you get `Insufficient disk space` error during container installation and you
 /container/config set tmpdir=usb1/pull ram-high=200M
 ```
 
-Replace `usb1` with your drive name (`usb1`, `usb2`, `sd1`, `nvme1`, `sata1`). After the container is installed, you can revert:
+Replace `usb1` with your drive's mount-point (see `/disk/print`).
+
+After the container is installed, you can revert:
 
 ```routeros
 /container/config set tmpdir="" ram-high=0
@@ -325,7 +348,7 @@ Checklist:
    - RouterOS 7.21+: `awg-proxy-{arch}.tar.gz` (OCI)
    - RouterOS 7.20 and below: `awg-proxy-{arch}-7.20-Docker.tar.gz` (Docker)
 
-2. **tmpdir on USB** -- without this, RouterOS extracts the image to internal flash, which is too small:
+2. **tmpdir on USB** -- without this, RouterOS extracts the image to internal flash, which is too small (replace `usb1` with your mount-point from `/disk/print`):
    ```routeros
    /container/config set tmpdir=usb1/pull
    ```
@@ -337,7 +360,7 @@ Checklist:
 
 4. **USB format** -- format the drive as ext4:
    ```routeros
-   /disk format usb1 file-system=ext4 mbr-partition-table=no
+   /disk/format-drive usb1 file-system=ext4 label=usb1
    ```
 
 5. **Load from file** -- on devices with 16 MB flash, load the image from a file instead of remote-image:

@@ -23,6 +23,29 @@ jobs:
       - name: Run tests
         run: go test -v -race ./...
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run configurator tests
+        working-directory: tests/e2e
+        run: npx playwright test configurator.test.js
+
   build:
     runs-on: ubuntu-latest
     outputs:
@@ -105,7 +128,7 @@ jobs:
             awg-proxy-amd64-7.20-Docker.tar.gz
 
   release:
-    needs: [test, build]
+    needs: [test, build, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -130,6 +153,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.build.outputs.tag }}
+          body_path: docs/RELEASE_TEMPLATE.md
+          append_body: true
           generate_release_notes: true
           files: |
             awg-proxy-linux-arm64

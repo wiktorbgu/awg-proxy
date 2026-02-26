@@ -18,6 +18,7 @@
 - [Дополнительные настройки](#дополнительные-настройки)
 - [Удаление](#удаление)
 - [Устранение неполадок](#устранение-неполадок)
+  - [Storage device not found](#storage-device-not-found)
   - [Insufficient disk space](#insufficient-disk-space)
   - [not allowed by device-mode](#not-allowed-by-device-mode)
   - [child spawn failed / could not load next layer](#child-spawn-failed--could-not-load-next-layer)
@@ -289,6 +290,26 @@ NAT для маркированного трафика:
 
 **Контейнер перезапускается** -- установите `AWG_LOG_LEVEL=info` и проверьте логи. Частая причина -- отсутствующие переменные окружения.
 
+### Storage device not found
+
+Если при установке появляется ошибка `Storage device usb1 not found or has 0 free space` -- диск не отформатирован или имя точки монтирования не совпадает.
+
+1. Проверьте доступные диски:
+
+```routeros
+/disk/print
+```
+
+2. Если диск виден как block-устройство, но без раздела -- отформатируйте его в ext4:
+
+```routeros
+/disk/format-drive usb1 file-system=ext4 label=usb1
+```
+
+3. После форматирования диск будет доступен как mount-point (обычно `usb1`). Проверьте имя через `/disk/print` и используйте его в конфигураторе (поле "Container storage").
+
+> **Важно:** Контейнеры требуют файловую систему ext4. FAT32 не подходит.
+
 ### Insufficient disk space
 
 Если при установке контейнера возникает ошибка `Insufficient disk space`, а на внешнем накопителе (USB, SD, NVMe) есть свободное место -- перенастройте директорию для загрузки образов:
@@ -297,7 +318,9 @@ NAT для маркированного трафика:
 /container/config set tmpdir=usb1/pull ram-high=200M
 ```
 
-Замените `usb1` на имя вашего накопителя (`usb1`, `usb2`, `sd1`, `nvme1`, `sata1`). После установки контейнера можно вернуть значение обратно:
+Замените `usb1` на mount-point вашего накопителя (см. `/disk/print`).
+
+После установки контейнера можно вернуть значение обратно:
 
 ```routeros
 /container/config set tmpdir="" ram-high=0
@@ -327,7 +350,7 @@ NAT для маркированного трафика:
    - RouterOS 7.21+: `awg-proxy-{arch}.tar.gz` (OCI)
    - RouterOS 7.20 и ниже: `awg-proxy-{arch}-7.20-Docker.tar.gz` (Docker)
 
-2. **tmpdir на USB** -- без этого RouterOS распаковывает образ на внутреннюю flash, которой не хватает:
+2. **tmpdir на USB** -- без этого RouterOS распаковывает образ на внутреннюю flash, которой не хватает (замените `usb1` на ваш mount-point из `/disk/print`):
    ```routeros
    /container/config set tmpdir=usb1/pull
    ```
@@ -339,7 +362,7 @@ NAT для маркированного трафика:
 
 4. **Формат USB** -- отформатируйте накопитель в ext4:
    ```routeros
-   /disk format usb1 file-system=ext4 mbr-partition-table=no
+   /disk/format-drive usb1 file-system=ext4 label=usb1
    ```
 
 5. **Загрузка из файла** -- на устройствах с 16 МБ flash загружайте образ через файл, а не remote-image:

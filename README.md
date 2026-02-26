@@ -20,6 +20,7 @@
 - [Устранение неполадок](#устранение-неполадок)
   - [Insufficient disk space](#insufficient-disk-space)
   - [not allowed by device-mode](#not-allowed-by-device-mode)
+  - [child spawn failed / could not load next layer](#child-spawn-failed--could-not-load-next-layer)
 - [Сборка из исходников](#сборка-из-исходников)
 - [Лицензия](#лицензия)
 
@@ -312,6 +313,38 @@ NAT для маркированного трафика:
 ```
 
 Роутер попросит подтверждение -- нажмите кнопку Reset или Mode на корпусе (зависит от модели) в течение нескольких минут, либо дождитесь автоматической перезагрузки. После перезагрузки повторите установку.
+
+### child spawn failed / could not load next layer
+
+На устройствах с 16 МБ flash (hAP ac2, hEX и др.) контейнер может не запускаться с ошибками:
+- `child spawn failed: container run error` или `exited with status 255` (RouterOS 7.20)
+- `download/extract error: could not load next layer` (RouterOS 7.21+)
+
+Чек-лист:
+
+1. **Формат образа** -- убедитесь, что используете правильный формат:
+   - RouterOS 7.21+: `awg-proxy-{arch}.tar.gz` (OCI)
+   - RouterOS 7.20 и ниже: `awg-proxy-{arch}-7.20-Docker.tar.gz` (Docker)
+
+2. **tmpdir на USB** -- без этого RouterOS распаковывает образ на внутреннюю flash, которой не хватает:
+   ```routeros
+   /container/config set tmpdir=usb1/pull
+   ```
+
+3. **root-dir** -- указывайте путь к папке на USB, но **не создавайте её вручную** (RouterOS создаст её сам):
+   ```routeros
+   /container add ... root-dir=usb1/awg-proxy
+   ```
+
+4. **Формат USB** -- отформатируйте накопитель в ext4:
+   ```routeros
+   /disk format usb1 file-system=ext4 mbr-partition-table=no
+   ```
+
+5. **Загрузка из файла** -- на устройствах с 16 МБ flash загружайте образ через файл, а не remote-image:
+   ```routeros
+   /container add file=awg-proxy-arm.tar.gz ...
+   ```
 
 ## Сборка из исходников
 

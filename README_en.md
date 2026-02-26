@@ -20,6 +20,7 @@ Lightweight Docker container that allows MikroTik routers to connect to AmneziaW
 - [Troubleshooting](#troubleshooting)
   - [Insufficient disk space](#insufficient-disk-space)
   - [not allowed by device-mode](#not-allowed-by-device-mode)
+  - [child spawn failed / could not load next layer](#child-spawn-failed--could-not-load-next-layer)
 - [Building from Source](#building-from-source)
 - [License](#license)
 
@@ -310,6 +311,38 @@ If you get `not allowed by device-mode` error when downloading an image or creat
 ```
 
 The router will ask for confirmation -- press the Reset or Mode button on the device (depends on model) within a few minutes, or wait for automatic reboot. After reboot, retry the installation.
+
+### child spawn failed / could not load next layer
+
+On devices with 16 MB flash (hAP ac2, hEX, etc.) the container may fail to start with errors:
+- `child spawn failed: container run error` or `exited with status 255` (RouterOS 7.20)
+- `download/extract error: could not load next layer` (RouterOS 7.21+)
+
+Checklist:
+
+1. **Image format** -- make sure you are using the correct format:
+   - RouterOS 7.21+: `awg-proxy-{arch}.tar.gz` (OCI)
+   - RouterOS 7.20 and below: `awg-proxy-{arch}-7.20-Docker.tar.gz` (Docker)
+
+2. **tmpdir on USB** -- without this, RouterOS extracts the image to internal flash, which is too small:
+   ```routeros
+   /container/config set tmpdir=usb1/pull
+   ```
+
+3. **root-dir** -- point to a folder on USB, but **do not create it manually** (RouterOS will create it automatically):
+   ```routeros
+   /container add ... root-dir=usb1/awg-proxy
+   ```
+
+4. **USB format** -- format the drive as ext4:
+   ```routeros
+   /disk format usb1 file-system=ext4 mbr-partition-table=no
+   ```
+
+5. **Load from file** -- on devices with 16 MB flash, load the image from a file instead of remote-image:
+   ```routeros
+   /container add file=awg-proxy-arm.tar.gz ...
+   ```
 
 ## Building from Source
 

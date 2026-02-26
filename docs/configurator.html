@@ -844,7 +844,7 @@
             '  :if ($arch = "arm") do={ :set file ("awg-proxy-arm" . $suffix . ".tar.gz") }',
             '  :if ($arch ~ "x86") do={ :set file ("awg-proxy-amd64" . $suffix . ".tar.gz") }',
             '  :if ($file = "") do={ :error "Unsupported architecture: $arch" }',
-            '  :local url "https://github.com/amneziamikrotikwg/awg-proxy/releases/latest/download/$file"',
+            '  :local url "https://github.com/backvista/awg-proxy/releases/latest/download/$file"',
             '  :local filePath ' + (storageDisk !== 'disk1' ? '("' + storageDisk + '/pull/" . $file)' : '$file'),
         ]);
         if (storageDisk !== 'disk1') {
@@ -862,7 +862,7 @@
         lines = lines.concat([
             '    :if ($freeStorage < 5242880) do={',
             '      :put ("WARNING: Low disk space (" . ($freeStorage / 1048576) . "MB free). Need at least 5MB.")',
-            '      :put "See: https://github.com/amneziamikrotikwg/awg-proxy#insufficient-disk-space"',
+            '      :put "See: https://github.com/backvista/awg-proxy#insufficient-disk-space"',
             '      :error "Insufficient disk space"',
             '    }',
             '    :put ("Fetching: $url -> " . $filePath)',

@@ -22,4 +22,4 @@
 
 ---
 
-**[CHANGELOG.md](https://github.com/leshak/awg-proxy/blob/main/CHANGELOG.md)** — full changelog with all versions / полный список изменений по всем версиям
+**[CHANGELOG.md](https://github.com/backvista/awg-proxy/blob/main/CHANGELOG.md)** — full changelog with all versions / полный список изменений по всем версиям

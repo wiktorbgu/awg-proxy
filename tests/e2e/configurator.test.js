@@ -450,7 +450,7 @@ test('S5: fetch only from trusted GitHub URL, no upload', async ({ page }) => {
     await generate(page, V1_CONF, 'usb1-part1');
     const outUsb = await getOutput(page);
 
-    const TRUSTED_URL_PREFIX = 'https://github.com/amneziamikrotikwg/awg-proxy/';
+    const TRUSTED_URL_PREFIX = 'https://github.com/backvista/awg-proxy/';
 
     for (const out of [outDisk1, outUsb]) {
         const lines = extractExecutableLines(out);

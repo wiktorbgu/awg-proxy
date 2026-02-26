@@ -1,4 +1,4 @@
-module github.com/amneziamikrotikwg/awg-proxy
+module github.com/backvista/awg-proxy
 
 go 1.25.2
 

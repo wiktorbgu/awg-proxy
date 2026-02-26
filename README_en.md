@@ -57,7 +57,8 @@ Done. The configurator works offline; no data is sent to any server.
   - **RouterOS 7.20 and below**: images `awg-proxy-{arch}-7.20-Docker.tar.gz` (Docker format)
   - The configurator detects the version automatically
 - Architecture: ARM64, ARM (v7), or x86_64 ([check your device](https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container))
-- At least 5 MB disk space, 16+ MB RAM recommended
+- At least 5 MB free disk space (or a USB drive)
+- At least 16 MB free RAM
 
 ## Manual Installation
 

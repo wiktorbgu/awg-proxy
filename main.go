@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/amneziawg-mikrotik/awg-proxy/internal/awg"
+	"github.com/amneziamikrotikwg/awg-proxy/internal/awg"
 )
 
 var version = "dev"

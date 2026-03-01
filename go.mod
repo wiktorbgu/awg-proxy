@@ -1,4 +1,4 @@
-module github.com/backvista/awg-proxy
+module github.com/timbrs/amneziawg-mikrotik
 
 go 1.25.2
 

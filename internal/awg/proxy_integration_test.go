@@ -109,7 +109,7 @@ func TestIsClosedErrGeneric(t *testing.T) {
 // TestProxyBidirectionalFlow simulates a complete VPN session:
 // handshake init -> response -> transport in both directions.
 func TestProxyBidirectionalFlow(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -249,7 +249,7 @@ func TestProxyBidirectionalFlow(t *testing.T) {
 // TestProxyTransportEchoRoundtrip verifies transport data survives a full
 // roundtrip through the proxy via an echo mock server.
 func TestProxyTransportEchoRoundtrip(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -329,7 +329,7 @@ func TestProxyTransportEchoRoundtrip(t *testing.T) {
 // TestProxyMultipleTransportPackets sends many transport packets rapidly
 // and verifies all arrive at the mock server with correct data.
 func TestProxyMultipleTransportPackets(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -402,7 +402,7 @@ func TestProxyMultipleTransportPackets(t *testing.T) {
 // TestProxyDropsJunkInbound verifies that junk packets sent from the server
 // side are not forwarded to the client.
 func TestProxyDropsJunkInbound(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -445,7 +445,7 @@ func TestProxyDropsJunkInbound(t *testing.T) {
 // TestProxyCookieReplyForwarding verifies cookie reply packets (type=3)
 // are correctly transformed inbound and forwarded to the client.
 func TestProxyCookieReplyForwarding(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -500,7 +500,7 @@ func TestProxyCookieReplyForwarding(t *testing.T) {
 // TestProxyOutboundCookieReply verifies outbound cookie reply (type=3)
 // is transformed with H3 type replacement.
 func TestProxyOutboundCookieReply(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -553,7 +553,7 @@ func TestProxyOutboundCookieReply(t *testing.T) {
 // TestProxyLargeTransportPacket verifies near-MTU transport packets
 // are handled correctly in both directions.
 func TestProxyLargeTransportPacket(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -852,7 +852,7 @@ func TestProxyV2HandshakeS1S2(t *testing.T) {
 // TestProxyGracefulShutdown verifies the proxy shuts down cleanly
 // without panic or hang after processing some traffic.
 func TestProxyGracefulShutdown(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -956,7 +956,7 @@ func startProxyWildcard(t *testing.T, cfg *Config, remoteAddr *net.UDPAddr) (*ne
 // recvmmsg returns AF_INET6 sockaddrs which don't match the AF_INET check,
 // causing clientAddr to never be set and all server responses to be dropped.
 func TestProxyListenWildcardAddr(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -1016,7 +1016,7 @@ func TestProxyListenWildcardAddr(t *testing.T) {
 // TestProxyMixedTraffic sends a mix of packet types (init, transport,
 // cookie) and verifies each is transformed correctly.
 func TestProxyMixedTraffic(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()

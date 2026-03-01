@@ -1,6 +1,7 @@
+> This project is not affiliated with or endorsed by MikroTik / SIA Mikrotikls
+
 # awg-proxy -- AmneziaWG for MikroTik
 
-[![Tests](https://github.com/backvista/awg-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/backvista/awg-proxy/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.25-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -39,7 +40,7 @@ Compatible with AWG v1 and v2 -- the version is detected automatically based on 
 ## Quick Start (Configurator)
 
 1. Export a `.conf` file from AmneziaVPN (see [Getting AWG Parameters](#getting-awg-parameters))
-2. Open the [configurator](https://backvista.github.io/awg-proxy/configurator.html)
+2. Open the [configurator](https://timbrs.github.io/amneziawg-mikrotik/configurator.html)
 3. Paste the `.conf` file contents
 4. Copy the generated commands and run them in MikroTik terminal
 
@@ -75,12 +76,12 @@ The router will ask for confirmation (button press or reboot, depending on the m
 
 ### 2. Upload Image
 
-Download `awg-proxy-{arch}.tar.gz` from [Releases](https://github.com/backvista/awg-proxy/releases/latest) and upload it to the router via Winbox or SCP. For RouterOS 7.20 and below, use files with the `-7.20-Docker` suffix (Docker format).
+Download `awg-proxy-{arch}.tar.gz` from [Releases](https://github.com/timbrs/amneziawg-mikrotik/releases) and upload it to the router via Winbox or SCP. For RouterOS 7.20 and below, use files with the `-7.20-Docker` suffix (Docker format).
 
 Or download directly on the router (replace URL with the actual one):
 
 ```routeros
-/tool/fetch url="https://github.com/backvista/awg-proxy/releases/download/vX.X.X/awg-proxy-arm64.tar.gz" dst-path=awg-proxy-arm64.tar.gz
+/tool/fetch url="https://github.com/timbrs/amneziawg-mikrotik/releases/latest/download/awg-proxy-arm64.tar.gz" dst-path=awg-proxy-arm64.tar.gz
 ```
 
 ### 3. Network Setup

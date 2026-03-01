@@ -125,7 +125,7 @@
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
         }
 
-        #storage-custom {
+        #storage-custom, #prefix-custom {
             margin-left: 8px;
             width: 160px;
         }
@@ -324,6 +324,17 @@
                 <option value="__custom">Custom...</option>
             </select>
             <input type="text" id="storage-custom" placeholder="e.g. sata1-part1" style="display:none">
+        </div>
+        <div style="margin-top:14px">
+            <label for="prefix-select">Tunnel name (prefix)</label>
+            <select id="prefix-select">
+                <option value="awg-proxy">awg-proxy — 1st tunnel (default)</option>
+                <option value="awg-proxy-2">awg-proxy-2 — 2nd tunnel</option>
+                <option value="awg-proxy-3">awg-proxy-3 — 3rd tunnel</option>
+                <option value="awg-proxy-4">awg-proxy-4 — 4th tunnel</option>
+                <option value="__custom">Custom...</option>
+            </select>
+            <input type="text" id="prefix-custom" placeholder="e.g. awg-office" style="display:none">
         </div>
         <div class="actions">
             <button class="btn btn-primary" onclick="generate()">Generate commands</button>
@@ -643,27 +654,27 @@
     // ============================================================
     // Generate uninstall script as /system/script/add command
     // ============================================================
-    function buildUninstallScriptSource(hasDNS, storageDisk) {
+    function buildUninstallScriptSource(hasDNS, storageDisk, prefix, net) {
         var src = [];
-        src.push('/system/script/add name=awg-proxy-uninstall comment=awg-proxy source={');
+        src.push('/system/script/add name=' + prefix + '-uninstall comment=' + prefix + ' source={');
         src.push('  :put "Uninstallimg AmneziaWG..."');
         src.push('  :log info "Uninstallimg AmneziaWG..."');
         if (hasDNS) {
             src.push('  :local prevDNS ""');
-            src.push('  :do { :set prevDNS [/container/envs/get [find where list="awg-proxy-env" key="AWG_PREV_DNS"] value] } on-error={}');
+            src.push('  :do { :set prevDNS [/container/envs/get [find where list="' + prefix + '-env" key="AWG_PREV_DNS"] value] } on-error={}');
         }
         if (storageDisk !== 'disk1') {
             src.push('  :local prevTmpdir ""');
-            src.push('  :do { :set prevTmpdir [/container/envs/get [find where list="awg-proxy-env" key="AWG_PREV_TMPDIR"] value] } on-error={}');
+            src.push('  :do { :set prevTmpdir [/container/envs/get [find where list="' + prefix + '-env" key="AWG_PREV_TMPDIR"] value] } on-error={}');
         }
-        src.push('  /ip/route/remove [find where comment=awg-proxy-tunnel]');
+        src.push('  /ip/route/remove [find where comment=' + prefix + '-tunnel]');
         if (hasDNS) {
-            src.push('  /ip/route/remove [find where comment=awg-proxy-dns]');
+            src.push('  /ip/route/remove [find where comment=' + prefix + '-dns]');
         }
-        src.push('  /container/stop [find where interface=veth-awg-proxy]');
+        src.push('  /container/stop [find where interface=veth-' + prefix + ']');
         src.push('  :delay 7s');
-        src.push('  /container/remove [find where interface=veth-awg-proxy]');
-        src.push('  /container/envs/remove [find where list="awg-proxy-env"]');
+        src.push('  /container/remove [find where interface=veth-' + prefix + ']');
+        src.push('  /container/envs/remove [find where list="' + prefix + '-env"]');
         if (hasDNS) {
             src.push('  :if ($prevDNS != "") do={');
             src.push('    /ip/dns/set servers=$prevDNS');
@@ -674,21 +685,21 @@
             src.push('  /container/config set tmpdir=$prevTmpdir');
             src.push('  :put ("Container tmpdir restored to: $prevTmpdir")');
         }
-        src.push('  /ip/firewall/nat/remove [find where out-interface="wg-awg-proxy"]');
-        src.push('  /ip/firewall/nat/remove [find where src-address="172.18.0.0/30"]');
-        src.push('  /ip/address/remove [find where address="172.18.0.1/30"]');
-        src.push('  /interface/veth/remove [find where name="veth-awg-proxy"]');
-        src.push('  /interface/wireguard/peers/remove [find where interface="wg-awg-proxy"]');
-        src.push('  /ip/address/remove [find where interface="wg-awg-proxy"]');
-        src.push('  /interface/wireguard/remove [find where name="wg-awg-proxy"]');
-        src.push('  :do { /file/remove [find where name~"awg-proxy.+tar"] } on-error={}');
-        src.push('  :do { /file/remove [find where name="' + storageDisk + '/awg-proxy"] } on-error={}');
+        src.push('  /ip/firewall/nat/remove [find where out-interface="wg-' + prefix + '"]');
+        src.push('  /ip/firewall/nat/remove [find where src-address="' + net.natSrc + '"]');
+        src.push('  /ip/address/remove [find where address="' + net.hostAddr + '"]');
+        src.push('  /interface/veth/remove [find where name="veth-' + prefix + '"]');
+        src.push('  /interface/wireguard/peers/remove [find where interface="wg-' + prefix + '"]');
+        src.push('  /ip/address/remove [find where interface="wg-' + prefix + '"]');
+        src.push('  /interface/wireguard/remove [find where name="wg-' + prefix + '"]');
+        src.push('  :do { /file/remove [find where name~"' + prefix + '.+tar"] } on-error={}');
+        src.push('  :do { /file/remove [find where name="' + storageDisk + '/' + prefix + '"] } on-error={}');
         if (storageDisk !== 'disk1') {
             src.push('  :do { /file/remove [find where name~"' + storageDisk + '/pull"] } on-error={}');
         }
         src.push('  :put "Uninstall AmneziaWG Proxy complete!"');
         src.push('  :log info "Uninstall AmneziaWG Proxy complete!"');
-        src.push('  /system/script/remove [find where name=awg-proxy-uninstall]');
+        src.push('  /system/script/remove [find where name=' + prefix + '-uninstall]');
         src.push('}');
         return src.join('\n');
     }
@@ -696,16 +707,17 @@
     // ============================================================
     // Generate MikroTik commands
     // ============================================================
-    function buildCommands(parsed, storageDisk) {
+    function buildCommands(parsed, storageDisk, prefix, net) {
         var i = parsed.interface;
         var p = parsed.peer;
         var dnsServers = parseDNSServers(i.DNS);
         var hasDNS = dnsServers.length > 0;
 
-        var peerAdd = '/interface/wireguard/peers/add interface=wg-awg-proxy' +
+        var vethIP = net.vethAddr.replace(/\/.*/, '');
+        var peerAdd = '/interface/wireguard/peers/add interface=wg-' + prefix +
             ' public-key="' + p.PublicKey + '"';
         if (p.PresharedKey) peerAdd += ' preshared-key="' + p.PresharedKey + '"';
-        peerAdd += ' endpoint-address=172.18.0.2 endpoint-port=51820' +
+        peerAdd += ' endpoint-address=' + vethIP + ' endpoint-port=51820' +
             ' allowed-address=' + p.AllowedIPs.replace(/\s*,\s*/g, ',');
         if (p.PersistentKeepalive) peerAdd += ' persistent-keepalive=' + p.PersistentKeepalive;
 
@@ -769,41 +781,41 @@
 
         lines.push('# 1. Uninstall script');
 
-        lines.push(buildUninstallScriptSource(hasDNS, storageDisk));
+        lines.push(buildUninstallScriptSource(hasDNS, storageDisk, prefix, net));
 
         lines = lines.concat([
             '',
             '# 2. Network infrastructure',
-            '/interface/veth/add name=veth-awg-proxy address=172.18.0.2/30 gateway=172.18.0.1',
-            '/ip/address/add address=172.18.0.1/30 interface=veth-awg-proxy',
-            '/ip/firewall/nat/add chain=srcnat action=masquerade src-address=172.18.0.0/30',
+            '/interface/veth/add name=veth-' + prefix + ' address=' + net.vethAddr + ' gateway=' + net.vethGw,
+            '/ip/address/add address=' + net.hostAddr + ' interface=veth-' + prefix,
+            '/ip/firewall/nat/add chain=srcnat action=masquerade src-address=' + net.natSrc,
             '',
             '# 3. WireGuard interface (MikroTik derives the public key automatically)',
-            '/interface/wireguard/add name=wg-awg-proxy private-key="' + i.PrivateKey + '" listen-port=12429 disabled=yes',
+            '/interface/wireguard/add name=wg-' + prefix + ' private-key="' + i.PrivateKey + '" listen-port=' + net.wgPort + ' disabled=yes',
             peerAdd,
-            '/ip/address/add address=' + i.Address + ' interface=wg-awg-proxy',
-            '/ip/firewall/nat/add chain=srcnat action=masquerade out-interface=wg-awg-proxy',
+            '/ip/address/add address=' + i.Address + ' interface=wg-' + prefix,
+            '/ip/firewall/nat/add chain=srcnat action=masquerade out-interface=wg-' + prefix,
             '',
             '# 4. Container environment variables',
-            '/container/envs/add list=awg-proxy-env key=AWG_LISTEN value=":51820"',
-            '/container/envs/add list=awg-proxy-env key=AWG_REMOTE value="' + p.Endpoint + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_JC value="' + i.Jc + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_JMIN value="' + i.Jmin + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_JMAX value="' + i.Jmax + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_S1 value="' + i.S1 + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_S2 value="' + i.S2 + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_H1 value="' + i.H1 + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_H2 value="' + i.H2 + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_H3 value="' + i.H3 + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_H4 value="' + i.H4 + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_SERVER_PUB value="' + p.PublicKey + '"',
-            '/container/envs/add list=awg-proxy-env key=AWG_CLIENT_PUB value=[/interface/wireguard/get [find name=wg-awg-proxy] public-key]',
+            '/container/envs/add list=' + prefix + '-env key=AWG_LISTEN value=":51820"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_REMOTE value="' + p.Endpoint + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_JC value="' + i.Jc + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_JMIN value="' + i.Jmin + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_JMAX value="' + i.Jmax + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_S1 value="' + i.S1 + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_S2 value="' + i.S2 + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_H1 value="' + i.H1 + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_H2 value="' + i.H2 + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_H3 value="' + i.H3 + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_H4 value="' + i.H4 + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_SERVER_PUB value="' + p.PublicKey + '"',
+            '/container/envs/add list=' + prefix + '-env key=AWG_CLIENT_PUB value=[/interface/wireguard/get [find name=wg-' + prefix + '] public-key]',
         ]);
 
-        if (i.S3) lines.push('/container/envs/add list=awg-proxy-env key=AWG_S3 value="' + i.S3 + '"');
-        if (i.S4) lines.push('/container/envs/add list=awg-proxy-env key=AWG_S4 value="' + i.S4 + '"');
+        if (i.S3) lines.push('/container/envs/add list=' + prefix + '-env key=AWG_S3 value="' + i.S3 + '"');
+        if (i.S4) lines.push('/container/envs/add list=' + prefix + '-env key=AWG_S4 value="' + i.S4 + '"');
         ['I1','I2','I3','I4','I5'].forEach(function(k) {
-            if (i[k]) lines.push('/container/envs/add list=awg-proxy-env key=AWG_' + k + ' value="' + i[k] + '"');
+            if (i[k]) lines.push('/container/envs/add list=' + prefix + '-env key=AWG_' + k + ' value="' + i[k] + '"');
         });
 
         if (hasDNS) {
@@ -811,11 +823,11 @@
             lines.push('');
             lines.push('# 5. DNS');
             lines.push(':local prevDNS [/ip/dns/get servers]');
-            lines.push('/container/envs/add list=awg-proxy-env key=AWG_PREV_DNS value=$prevDNS');
+            lines.push('/container/envs/add list=' + prefix + '-env key=AWG_PREV_DNS value=$prevDNS');
             lines.push('# NOTE: replaces existing DNS configuration');
             lines.push('/ip/dns/set servers=' + dnsStr);
             for (var d = 0; d < dnsServers.length; d++) {
-                lines.push('/ip/route/add dst-address=' + dnsServers[d] + '/32 gateway=wg-awg-proxy distance=1 comment=awg-proxy-dns');
+                lines.push('/ip/route/add dst-address=' + dnsServers[d] + '/32 gateway=wg-' + prefix + ' distance=1 comment=' + prefix + '-dns');
             }
         }
 
@@ -825,7 +837,7 @@
         ]);
         if (storageDisk !== 'disk1') {
             lines.push(':local prevTmpdir [/container/config/get tmpdir]');
-            lines.push('/container/envs/add list=awg-proxy-env key=AWG_PREV_TMPDIR value=$prevTmpdir');
+            lines.push('/container/envs/add list=' + prefix + '-env key=AWG_PREV_TMPDIR value=$prevTmpdir');
             lines.push('/container/config set tmpdir=' + storageDisk + '/pull ram-high=200M');
         }
         lines = lines.concat([
@@ -844,7 +856,7 @@
             '  :if ($arch = "arm") do={ :set file ("awg-proxy-arm" . $suffix . ".tar.gz") }',
             '  :if ($arch ~ "x86") do={ :set file ("awg-proxy-amd64" . $suffix . ".tar.gz") }',
             '  :if ($file = "") do={ :error "Unsupported architecture: $arch" }',
-            '  :local url "https://github.com/backvista/awg-proxy/releases/latest/download/$file"',
+            '  :local url "https://github.com/timbrs/amneziawg-mikrotik/releases/latest/download/$file"',
             '  :local filePath ' + (storageDisk !== 'disk1' ? '("' + storageDisk + '/pull/" . $file)' : '$file'),
         ]);
         if (storageDisk !== 'disk1') {
@@ -862,7 +874,7 @@
         lines = lines.concat([
             '    :if ($freeStorage < 5242880) do={',
             '      :put ("WARNING: Low disk space (" . ($freeStorage / 1048576) . "MB free). Need at least 5MB.")',
-            '      :put "See: https://github.com/backvista/awg-proxy#insufficient-disk-space"',
+            '      :put "See: https://github.com/timbrs/amneziawg-mikrotik#insufficient-disk-space"',
             '      :error "Insufficient disk space"',
             '    }',
             '    :put ("Fetching: $url -> " . $filePath)',
@@ -870,18 +882,18 @@
             '  } else={',
             '    :put ("File already exists: " . $filePath)',
             '  }',
-            '  /container/add file=$filePath interface=veth-awg-proxy envlist=awg-proxy-env hostname=awg-proxy root-dir=' + storageDisk + '/awg-proxy logging=yes start-on-boot=yes comment=awg-proxy',
-            '  :if ($minor > 20) do={ [:parse "/container/set [find where interface=veth-awg-proxy] shm-size=4M"] }',
+            '  /container/add file=$filePath interface=veth-' + prefix + ' envlist=' + prefix + '-env hostname=' + prefix + ' root-dir=' + storageDisk + '/' + prefix + ' logging=yes start-on-boot=yes comment=' + prefix,
+            '  :if ($minor > 20) do={ [:parse "/container/set [find where interface=veth-' + prefix + '] shm-size=4M"] }',
             '  /file/remove $filePath',
             '  :local freeMem [/system/resource/get free-memory]',
             '  :if ($freeMem < 16777216) do={',
             '    :put ("WARNING: Low memory (" . ($freeMem / 1048576) . "MB free). 16MB+ recommended.")',
             '  }',
-            '  /container/start [find where interface=veth-awg-proxy]',
+            '  /container/start [find where interface=veth-' + prefix + ']',
             '  :do { /file/remove [find where name="console-dump.txt"] } on-error={}',
             '  :put "Waiting for container to start..."',
             '  :delay 5s',
-            '  /interface/wireguard/enable wg-awg-proxy',
+            '  /interface/wireguard/enable wg-' + prefix,
             '  :put "WireGuard interface enabled"',
             '  :put "Installation complete!"',
         ]);
@@ -902,9 +914,10 @@
         if (detectedProto !== 'v2') {
             lines = lines.concat([
                 '  :put ""',
-                '  :put "  NOTE: Your config uses AWG ' + detectedProto + '. For better obfuscation,"',
-                '  :put "  update AmneziaVPN to the latest version and regenerate the config."',
+                '  :put "  [WARNING]: Your config uses AWG ' + detectedProto + '. For better obfuscation,"',
+                '  :put "  update AmneziaVPN (v2) to the latest version and regenerate the config."',
                 '  :put "  Latest version supports AWG v2 with H-ranges and S3/S4 padding."',
+                '  :put "  https://github.com/amnezia-vpn/amnezia-client/releases"',
             ]);
         }
 
@@ -913,19 +926,19 @@
             '  :put "Route specific traffic through the AmneziaWG tunnel:"',
             '  :put ""',
             '  :put "  Route a single host:"',
-            '  :put "    /ip/route/add dst-address=8.8.8.8/32 gateway=wg-awg-proxy comment=awg-proxy-tunnel"',
+            '  :put "    /ip/route/add dst-address=8.8.8.8/32 gateway=wg-' + prefix + ' comment=' + prefix + '-tunnel"',
             '  :put ""',
             '  :put "  Route a subnet:"',
-            '  :put "    /ip/route/add dst-address=100.0.0.0/8 gateway=wg-awg-proxy comment=awg-proxy-tunnel"',
+            '  :put "    /ip/route/add dst-address=100.0.0.0/8 gateway=wg-' + prefix + ' comment=' + prefix + '-tunnel"',
             '  :put ""',
             '  :put "  Remove a route:"',
-            '  :put "    /ip/route/remove [find where comment=awg-proxy-tunnel dst-address=8.8.8.8/32]"',
+            '  :put "    /ip/route/remove [find where comment=' + prefix + '-tunnel dst-address=8.8.8.8/32]"',
             '  :put ""',
             '  :put "  Show all tunnel routes:"',
-            '  :put "    /ip/route/print where comment=awg-proxy-tunnel"',
+            '  :put "    /ip/route/print where comment=' + prefix + '-tunnel"',
             '  :put ""',
             '  :put "  Uninstall:"',
-            '  :put "    /system/script/run awg-proxy-uninstall"',
+            '  :put "    /system/script/run ' + prefix + '-uninstall"',
             '  :put "========================="',
             '}',
             '',
@@ -976,6 +989,45 @@
         return sel;
     }
 
+    document.getElementById('prefix-select').addEventListener('change', function() {
+        var custom = document.getElementById('prefix-custom');
+        if (this.value === '__custom') {
+            custom.style.display = 'inline-block';
+            custom.focus();
+        } else {
+            custom.style.display = 'none';
+            custom.value = '';
+        }
+    });
+
+    function getPrefixName() {
+        var sel = document.getElementById('prefix-select').value;
+        if (sel === '__custom') {
+            var v = document.getElementById('prefix-custom').value.trim();
+            return v || 'awg-proxy';
+        }
+        return sel;
+    }
+
+    function getTunnelNumber(prefix) {
+        if (prefix === 'awg-proxy') return 1;
+        if (prefix === 'awg-proxy-2') return 2;
+        if (prefix === 'awg-proxy-3') return 3;
+        if (prefix === 'awg-proxy-4') return 4;
+        return 1;
+    }
+
+    function getTunnelNetwork(n) {
+        var base = 4 * (n - 1);
+        return {
+            vethAddr: '172.18.0.' + (base + 2) + '/30',
+            hostAddr: '172.18.0.' + (base + 1) + '/30',
+            vethGw: '172.18.0.' + (base + 1),
+            natSrc: '172.18.0.' + base + '/30',
+            wgPort: 12428 + n
+        };
+    }
+
     // ============================================================
     // Main
     // ============================================================
@@ -1010,14 +1062,21 @@
             return;
         }
 
-        var commands = buildCommands(parsed, getStorageDisk());
+        var prefix = getPrefixName();
+        if (!(/^[a-zA-Z0-9]$/.test(prefix) || /^[a-zA-Z0-9][a-zA-Z0-9-]{0,28}[a-zA-Z0-9]$/.test(prefix))) {
+            showError('Invalid tunnel prefix: only letters, digits, and hyphens allowed (1-30 chars, cannot start/end with hyphen).');
+            return;
+        }
+        var tunnelN = getTunnelNumber(prefix);
+        var net = getTunnelNetwork(tunnelN);
+        var commands = buildCommands(parsed, getStorageDisk(), prefix, net);
         document.getElementById('output').dataset.plain = commands;
         document.getElementById('output').innerHTML = highlight(commands);
         document.getElementById('output-section').style.display = 'block';
 
         var uninstall = [
-            '# To uninstall AWG Proxy, run:',
-            '/system/script/run awg-proxy-uninstall',
+            '# To uninstall ' + prefix + ', run:',
+            '/system/script/run ' + prefix + '-uninstall',
         ].join('\n');
         document.getElementById('uninstall-output').dataset.plain = uninstall;
         document.getElementById('uninstall-output').innerHTML = highlight(uninstall);
@@ -1042,6 +1101,9 @@
         document.getElementById('storage-select').value = 'disk1';
         document.getElementById('storage-custom').style.display = 'none';
         document.getElementById('storage-custom').value = '';
+        document.getElementById('prefix-select').value = 'awg-proxy';
+        document.getElementById('prefix-custom').style.display = 'none';
+        document.getElementById('prefix-custom').value = '';
         document.getElementById('conf-input').focus();
     }
 

@@ -2,26 +2,23 @@ package awg
 
 import (
 	"encoding/binary"
-	"math/rand/v2"
 	"net"
-	"os"
-	"strconv"
 	"testing"
 	"time"
 )
 
-// ams42 config: exact parameters from ams42.conf.
-func ams42Config() *Config {
+// proxyTestConfig returns a synthetic config for proxy tests.
+func proxyTestConfig() *Config {
 	cfg := &Config{
 		Jc:       4,
 		Jmin:     10,
 		Jmax:     50,
 		S1:       46,
 		S2:       122,
-		H1:       HRange{Min: 1033089720, Max: 1033089720},
-		H2:       HRange{Min: 1336452505, Max: 1336452505},
-		H3:       HRange{Min: 1858775673, Max: 1858775673},
-		H4:       HRange{Min: 332219739, Max: 332219739},
+		H1:       HRange{Min: 100, Max: 100},
+		H2:       HRange{Min: 200, Max: 200},
+		H3:       HRange{Min: 300, Max: 300},
+		H4:       HRange{Min: 400, Max: 400},
 		Timeout:  180,
 		LogLevel: LevelInfo,
 	}
@@ -118,7 +115,7 @@ func readPackets(conn *net.UDPConn, deadline time.Duration, maxPackets int) [][]
 }
 
 func TestProxyForwardsHandshakeInit(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	// Start mock AWG server.
 	mockServer := startMockServer(t)
@@ -200,7 +197,7 @@ func TestProxyForwardsHandshakeInit(t *testing.T) {
 }
 
 func TestProxyForwardsHandshakeResponse(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	// Start mock AWG server.
 	mockServer := startMockServer(t)
@@ -311,7 +308,7 @@ func TestProxyForwardsHandshakeResponse(t *testing.T) {
 }
 
 func TestProxyForwardsTransportData(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	// Start mock AWG server.
 	mockServer := startMockServer(t)
@@ -386,121 +383,5 @@ func TestProxyForwardsTransportData(t *testing.T) {
 	// Verify no junk packets were sent (transport data should not trigger junk).
 	if len(packets) > 1 {
 		t.Fatalf("transport data should NOT trigger junk packets, but got %d extra packets", len(packets)-1)
-	}
-}
-
-func TestProxyRealAWGServer(t *testing.T) {
-	if os.Getenv("AWG_TEST_REAL") != "1" {
-		t.Skip("skipping real AWG server test (set AWG_TEST_REAL=1 to enable)")
-	}
-
-	cfg := ams42Config()
-
-	remoteAddr, err := net.ResolveUDPAddr("udp", "94.142.136.42:41259")
-	if err != nil {
-		t.Fatal("resolve remote: ", err)
-	}
-
-	// Start proxy on random port.
-	listenAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal("resolve listen: ", err)
-	}
-
-	// Bind to discover port, then release and let proxy use it.
-	tmpConn, err := net.ListenUDP("udp", listenAddr)
-	if err != nil {
-		t.Fatal("tmp listen: ", err)
-	}
-	proxyAddr := tmpConn.LocalAddr().(*net.UDPAddr)
-	proxyPort := proxyAddr.Port
-	tmpConn.Close()
-	time.Sleep(10 * time.Millisecond)
-
-	proxyAddr = &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: proxyPort}
-
-	t.Logf("proxy will listen on %s", proxyAddr.String())
-	t.Logf("remote AWG server: %s", remoteAddr.String())
-	t.Logf("config: Jc=%d Jmin=%d Jmax=%d S1=%d S2=%d H1=%d H2=%d H3=%d H4=%d",
-		cfg.Jc, cfg.Jmin, cfg.Jmax, cfg.S1, cfg.S2, cfg.H1.Min, cfg.H2.Min, cfg.H3.Min, cfg.H4.Min)
-
-	proxy := NewProxy(cfg, proxyAddr, remoteAddr)
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		proxy.Run(stop)
-	}()
-	defer func() {
-		close(stop)
-		<-done
-	}()
-
-	// Wait for proxy to start.
-	time.Sleep(100 * time.Millisecond)
-
-	// Create client.
-	clientConn, err := net.DialUDP("udp", nil, proxyAddr)
-	if err != nil {
-		t.Fatal("dial proxy: ", err)
-	}
-	defer clientConn.Close()
-
-	// Build a fake WG handshake init (type=1, 148 bytes, random payload).
-	initPacket := make([]byte, WgHandshakeInitSize)
-	binary.LittleEndian.PutUint32(initPacket[:4], wgHandshakeInit)
-	for i := 4; i < WgHandshakeInitSize; i++ {
-		initPacket[i] = byte(rand.IntN(256))
-	}
-
-	t.Logf("sending fake WG handshake init (%d bytes) through proxy to real server...", len(initPacket))
-
-	_, err = clientConn.Write(initPacket)
-	if err != nil {
-		t.Fatal("write to proxy: ", err)
-	}
-
-	// Wait up to 5 seconds for any response.
-	clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	respBuf := make([]byte, 1500)
-	n, err := clientConn.Read(respBuf)
-	if err != nil {
-		t.Logf("no response received within 5 seconds: %v", err)
-		t.Logf("this is EXPECTED for a fake handshake -- the AWG server likely dropped it")
-		t.Logf("but the proxy successfully forwarded the packet (Jc=%d junk + transformed init)", cfg.Jc)
-
-		// Even though we didn't get a response, verify that the proxy is running
-		// and can still accept packets by sending another one.
-		initPacket2 := make([]byte, WgHandshakeInitSize)
-		binary.LittleEndian.PutUint32(initPacket2[:4], wgHandshakeInit)
-		for i := 4; i < WgHandshakeInitSize; i++ {
-			initPacket2[i] = byte(rand.IntN(256))
-		}
-		_, err2 := clientConn.Write(initPacket2)
-		if err2 != nil {
-			t.Fatalf("proxy seems dead, cannot send second packet: %v", err2)
-		}
-		t.Logf("proxy is still alive and accepting packets")
-	} else {
-		t.Logf("RECEIVED response from real AWG server: %d bytes", n)
-		if n >= 4 {
-			respType := binary.LittleEndian.Uint32(respBuf[:4])
-			t.Logf("response type: %d", respType)
-			if respType == wgHandshakeResponse {
-				t.Logf("response is a WG handshake response (type=2) -- proxy inbound transform worked!")
-			} else {
-				t.Logf("response type %d is not a standard WG handshake response", respType)
-			}
-		}
-		t.Logf("first 32 bytes: ")
-		limit := n
-		if limit > 32 {
-			limit = 32
-		}
-		hexStr := ""
-		for i := 0; i < limit; i++ {
-			hexStr += "0x" + strconv.FormatUint(uint64(respBuf[i]), 16) + " "
-		}
-		t.Logf("  %s", hexStr)
 	}
 }

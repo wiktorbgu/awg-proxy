@@ -1,7 +1,6 @@
 package awg
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"net"
 	"sort"
@@ -13,7 +12,7 @@ import (
 
 // --- Helpers ---
 
-// benchConfig returns ams42-based config with logging disabled for benchmarks.
+// benchConfig returns a synthetic config with logging disabled for benchmarks.
 func benchConfig() *Config {
 	cfg := &Config{
 		Jc:       4,
@@ -21,10 +20,10 @@ func benchConfig() *Config {
 		Jmax:     50,
 		S1:       46,
 		S2:       122,
-		H1:       HRange{Min: 1033089720, Max: 1033089720},
-		H2:       HRange{Min: 1336452505, Max: 1336452505},
-		H3:       HRange{Min: 1858775673, Max: 1858775673},
-		H4:       HRange{Min: 332219739, Max: 332219739},
+		H1:       HRange{Min: 100, Max: 100},
+		H2:       HRange{Min: 200, Max: 200},
+		H3:       HRange{Min: 300, Max: 300},
+		H4:       HRange{Min: 400, Max: 400},
 		Timeout:  180,
 		LogLevel: LevelNone,
 	}
@@ -501,12 +500,13 @@ func BenchmarkProxyHandshakeBurst(b *testing.B) {
 	}
 }
 
-// benchConfigMAC1 returns a config with real MAC1 keys for realistic benchmarking.
+// benchConfigMAC1 returns a config with synthetic MAC1 keys for benchmarking.
 func benchConfigMAC1() *Config {
 	cfg := benchConfig()
-	// abs.conf keys (test-only, encoding/base64 allowed in _test.go).
-	serverPub, _ := base64.StdEncoding.DecodeString("IUUsYfzUNrX71vx3hrLQDCPBP2BTO/tqXn7qsZDRzFs=")
-	clientPub, _ := base64.StdEncoding.DecodeString("2GokiLY8vJBIq/bKwynqWSwIInDWF/TlXPCuPXMiVXY=")
+	serverPub := make([]byte, 32)
+	serverPub[0] = 1
+	clientPub := make([]byte, 32)
+	clientPub[0] = 2
 	copy(cfg.ServerPub[:], serverPub)
 	copy(cfg.ClientPub[:], clientPub)
 	cfg.ComputeMAC1Keys()

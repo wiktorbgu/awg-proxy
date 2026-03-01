@@ -73,7 +73,7 @@ func forceReconnect(t *testing.T, proxy *Proxy) *net.UDPConn {
 // TestProxyReconnectBasic verifies that after the remote connection is
 // forcibly closed, the proxy reconnects and outbound traffic resumes.
 func TestProxyReconnectBasic(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -135,7 +135,7 @@ func TestProxyReconnectBasic(t *testing.T) {
 // TestProxyReconnectBidirectional verifies that both client->server and
 // server->client traffic work correctly after a forced reconnect.
 func TestProxyReconnectBidirectional(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -241,7 +241,7 @@ func TestProxyReconnectBidirectional(t *testing.T) {
 // TestProxyReconnectMultiple forces three sequential reconnects and
 // verifies traffic works after each one.
 func TestProxyReconnectMultiple(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -294,7 +294,7 @@ func TestProxyReconnectMultiple(t *testing.T) {
 // TestProxyClientAddrResetOnReconnect verifies that the proxy clears the
 // client address on reconnect and re-establishes it from the next packet.
 func TestProxyClientAddrResetOnReconnect(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -333,7 +333,7 @@ func TestProxyClientAddrResetOnReconnect(t *testing.T) {
 // TestProxyNewClientAfterReconnect verifies that a new client (different
 // source port) can take over after a reconnect clears the old client address.
 func TestProxyNewClientAfterReconnect(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -469,7 +469,7 @@ func TestProxyReconnectPreservesTransformConfig(t *testing.T) {
 // mid-stream doesn't cause the proxy to hang or crash. Some packets
 // may be lost during the reconnect window, but the proxy recovers.
 func TestProxyReconnectDuringTraffic(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -540,7 +540,7 @@ func TestProxyReconnectDuringTraffic(t *testing.T) {
 // the client (e.g. WG keepalives) mark the proxy as active, preventing
 // false timeout reconnects when only client->server traffic flows.
 func TestProxyClientToServerSetsLastActive(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	mockServer := startMockServer(t)
 	defer mockServer.Close()
@@ -599,7 +599,7 @@ func TestProxyClientToServerSetsLastActive(t *testing.T) {
 // responses). This was the exact bug: timeout checker saw no activity
 // because clientToServer never set lastActive.
 func TestProxyNoFalseReconnectOnKeepalive(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 	cfg.Timeout = 2 // 2-second timeout for fast test
 
 	mockServer := startMockServer(t)
@@ -642,7 +642,7 @@ func TestProxyNoFalseReconnectOnKeepalive(t *testing.T) {
 // TestProxyShutdownDuringReconnect verifies that requesting shutdown while
 // the proxy is in the reconnect loop doesn't hang.
 func TestProxyShutdownDuringReconnect(t *testing.T) {
-	cfg := ams42Config()
+	cfg := proxyTestConfig()
 
 	// Point proxy at a non-existent address (high port, unlikely to respond).
 	// Use a real mock server first to start the proxy, then close it.
